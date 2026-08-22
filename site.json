@@ -1,0 +1,11 @@
+{
+  "title": "TripWise",
+  "description": "Empowering small-scale Filipino fishermen, this app provides real-time trip assessments, safety features, and catch logging to enhance fishing efficiency and safety.",
+  "robots": {
+    "index": true
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
