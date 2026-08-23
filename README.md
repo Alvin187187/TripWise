@@ -217,28 +217,28 @@ flowchart TD
 
 ```mermaid
 graph TB
-    subgraph Client [Browser — React SPA]
+    subgraph Client["Browser - React SPA"]
         UI[React UI Shell]
         LS[(localStorage)]
-        Live[live.ts — Data Engine]
-        Ledger[ledger.ts — Trip Math]
-        Chat[ChatPanel — Pawi]
+        Live["live.ts - Data Engine"]
+        Ledger["ledger.ts - Trip Math"]
+        Chat["ChatPanel - Pawi"]
         Offline[chatOffline.ts]
     end
 
-    subgraph External [External APIs]
-        OM[Open-Meteo Forecast + Marine]
-        PAG[PAGASA Gale via Jina]
-        DOE[DOE Diesel via Jina]
+    subgraph External["External APIs"]
+        OM["Open-Meteo Forecast + Marine"]
+        PAG["PAGASA Gale via Jina"]
+        DOE["DOE Diesel via Jina"]
     end
 
-    subgraph Backend [Vercel Serverless]
-        API[/api/chat — Python]
-        GEM[Gemini 2.5 Flash]
+    subgraph Backend["Vercel Serverless"]
+        API["/api/chat - Python"]
+        GEM["Gemini 2.5 Flash"]
     end
 
-    subgraph DB [Supabase]
-        PG[(chat_logs table)]
+    subgraph DB["Supabase"]
+        PG[(chat_logs)]
     end
 
     UI --> Live
