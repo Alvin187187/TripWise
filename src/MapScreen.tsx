@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GeoJSONSource, LngLatBounds, Map, Marker, NavigationControl, type MapMouseEvent } from "maplibre-gl";
+import { GeoJSONSource, LngLatBounds, Map, Marker, NavigationControl, setWorkerUrl, type MapMouseEvent } from "maplibre-gl";
+import maplibreWorker from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { mascotHistory, mascotMap, photos } from "./assets/media";
 import Icon, { type IconName } from "./icons";
 import { SPECIES, SPOT_META, uid, type SavedSpot, type SpotCat } from "./ledger";
+
+setWorkerUrl(maplibreWorker);
 
 type MotorClass = "small" | "typical" | "heavier";
 
@@ -21,6 +24,22 @@ const DIESEL = 68;
 const LPH: Record<MotorClass, number> = { small: 2.5, typical: 4.2, heavier: 6.5 };
 const CRUISE_KMH = 12;
 const STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
+const RASTER_STYLE = {
+  version: 8 as const,
+  sources: {
+    carto: {
+      type: "raster" as const,
+      tiles: [
+        "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+        "https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+        "https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+      ],
+      tileSize: 256,
+      attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+    },
+  },
+  layers: [{ id: "carto", type: "raster" as const, source: "carto" }],
+};
 
 const SPOTS = [
   { name: "Tangos Shoal", lat: 14.6694, lng: 120.9478, dist: "2.4 km WSW", lastKg: 11.0, species: "Lambat", verdict: "GO" as const, photo: photos.mapTangos },
@@ -296,7 +315,11 @@ export default function MapScreen({
     map.on("rotate", syncBearing);
     map.on("rotateend", syncBearing);
 
-    map.on("load", () => {
+    let decorated = false;
+    let usedFallback = false;
+    const decorate = () => {
+      if (decorated) return;
+      decorated = true;
       const homeEl = document.createElement("div");
       homeEl.className = "omap-home";
       homeEl.innerHTML = "<span class='omap-home__pulse'></span><span class='omap-home__dot'></span>";
@@ -316,7 +339,19 @@ export default function MapScreen({
         markersRef.current.push(mk);
       });
       setReady(true);
+    };
+
+    map.on("load", decorate);
+    map.once("error", () => {
+      if (usedFallback || decorated) return;
+      usedFallback = true;
+      map.setStyle(RASTER_STYLE);
     });
+    const bootTimer = window.setTimeout(() => {
+      if (decorated || usedFallback) return;
+      usedFallback = true;
+      map.setStyle(RASTER_STYLE);
+    }, 8000);
 
     map.on("click", (e: MapMouseEvent) => {
       const pt = { lat: Number(e.lngLat.lat.toFixed(5)), lng: Number(e.lngLat.lng.toFixed(5)) };
@@ -334,6 +369,7 @@ export default function MapScreen({
     ro.observe(wrapRef.current);
 
     return () => {
+      window.clearTimeout(bootTimer);
       map.off("rotate", syncBearing);
       map.off("rotateend", syncBearing);
       ro.disconnect();
