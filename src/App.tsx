@@ -993,6 +993,30 @@ function HomeScreen({ profile, trips, live, onNav }: { profile: FisherProfile; t
   const firstName = profile.name.split(" ")[0];
   const lastKg = last ? tripCatchKg(last) : 0;
 
+  // SOS hold-to-activate (4 seconds)
+  const [sosHold, setSosHold] = useState(0);
+  const [sosActive, setSosActive] = useState(false);
+  const sosTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function startSos() {
+    setSosHold(0);
+    const start = Date.now();
+    sosTimerRef.current = setInterval(() => {
+      const pct = Math.min(((Date.now() - start) / 4000) * 100, 100);
+      setSosHold(pct);
+      if (pct >= 100) {
+        cancelSos(false);
+        setSosActive(true);
+      }
+    }, 40);
+  }
+
+  function cancelSos(reset = true) {
+    if (sosTimerRef.current) clearInterval(sosTimerRef.current);
+    sosTimerRef.current = null;
+    if (reset) setSosHold(0);
+  }
+
   return (
     <div className="dash">
       <header className="home-bar">
@@ -1003,14 +1027,34 @@ function HomeScreen({ profile, trips, live, onNav }: { profile: FisherProfile; t
             <div className="home-bar__hint">{t(lang, "tagline")}</div>
           </div>
         </div>
-        <KeyBtn variant="danger" size="sm" onClick={() => {}}>
+        <button
+          type="button"
+          className={`home-sos ${sosHold > 0 ? "is-holding" : ""} ${sosActive ? "is-live" : ""}`}
+          onPointerDown={startSos}
+          onPointerUp={() => cancelSos(true)}
+          onPointerLeave={() => cancelSos(true)}
+          aria-label="Hold 4 seconds for SOS"
+        >
+          <svg className="home-sos__ring" viewBox="0 0 44 44">
+            <circle cx="22" cy="22" r="19" />
+            <circle cx="22" cy="22" r="19" style={{ strokeDasharray: `${2 * Math.PI * 19}`, strokeDashoffset: `${2 * Math.PI * 19 * (1 - sosHold / 100)}` }} />
+          </svg>
           <IconSlot name="lifebuoy" size={16} color="#fff" title="SOS" />
-          SOS
-        </KeyBtn>
+          <span>{sosActive ? "LIVE" : sosHold > 0 ? `${Math.ceil((100 - sosHold) / 25)}s` : "SOS"}</span>
+        </button>
         <button onClick={() => onNav("settings")} className="icon-key" aria-label={t(lang, "settings")}>
           <IcGear size={18} color="white" />
         </button>
       </header>
+
+      {sosActive && (
+        <div className="home-sos-banner">
+          <strong>SOS ACTIVATED</strong>
+          <span>{lang === "fil" ? "I-share ang location mo sa pamilya" : "Share your location with family"}</span>
+          <button type="button" onClick={() => setSosActive(false)} className="home-sos-banner__dismiss">✕</button>
+        </div>
+      )}
+
       <div className="sync-strip">
         <IconSlot name="cloud-check" size={16} color={C.go} title="Offline cache" />
         <div>

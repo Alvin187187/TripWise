@@ -668,7 +668,7 @@ img.mascot-slot[src=""] {
 /* ── App bar / nav ── */
 .app-bar {
   background: linear-gradient(180deg, #165a96 0%, var(--header) 100%);
-  padding: 52px 20px 16px;
+  padding: calc(env(safe-area-inset-top, 12px) + 12px) 20px 16px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1079,7 +1079,7 @@ textarea.slot {
 }
 
 .home-bar {
-  padding: 52px 20px 14px;
+  padding: calc(env(safe-area-inset-top, 12px) + 12px) 20px 14px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2918,8 +2918,9 @@ textarea.slot {
   z-index: 6;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 68px;
 }
 
 .omap-menu {
@@ -2955,8 +2956,8 @@ textarea.slot {
 .omap-menu__row--mint i { background: #dcfce7; }
 
 .omap-fab {
-  width: 58px;
-  height: 58px;
+  width: 54px;
+  height: 54px;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -3061,7 +3062,7 @@ textarea.slot {
   align-items: flex-end;
   justify-content: space-between;
   gap: 10px;
-  padding: 0 10px 8px;
+  padding: 0 14px 12px;
   pointer-events: none;
 }
 
@@ -3464,6 +3465,14 @@ textarea.slot {
   display: flex;
   align-items: center;
   gap: 10px;
+  position: relative;
+  padding-right: 40px;
+}
+
+.omap-timeline__top > button {
+  position: absolute;
+  top: 0;
+  right: 0;
 }
 
 .omap-timeline__top img {
@@ -4985,10 +4994,10 @@ button.tw-slide:active,
 /* FAB */
 .chat-fab {
   position: absolute;
-  bottom: calc(var(--bottom-nav-h) + 16px);
-  right: 20px;
-  width: 56px;
-  height: 56px;
+  bottom: calc(var(--bottom-nav-h) + 14px);
+  right: 14px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   border: 3px solid #0E4C81;
   background: #fff;
@@ -5003,8 +5012,8 @@ button.tw-slide:active,
 }
 .chat-fab:active { transform: scale(0.9); }
 .chat-fab__img {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -5296,4 +5305,97 @@ button.tw-slide:active,
 }
 .chat-send:active:not(:disabled) {
   transform: scale(0.9);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   HOME SOS — hold-to-activate button
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+.home-sos {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  border-radius: 99px;
+  border: none;
+  background: #DC2626;
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  transition: background 0.2s, transform 0.1s;
+}
+.home-sos:active,
+.home-sos.is-holding {
+  transform: scale(0.95);
+}
+.home-sos.is-live {
+  background: #16A34A;
+  animation: sosPulse 1.2s ease-in-out infinite;
+}
+@keyframes sosPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(22, 163, 74, 0); }
+}
+
+.home-sos__ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.home-sos__ring circle:first-child {
+  fill: none;
+  stroke: transparent;
+}
+.home-sos__ring circle:last-child {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.6);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: center;
+  transition: stroke-dashoffset 0.04s linear;
+}
+
+/* SOS banner */
+.home-sos-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #16A34A;
+  color: #fff;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+}
+.home-sos-banner strong {
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+}
+.home-sos-banner span {
+  flex: 1;
+}
+.home-sos-banner__dismiss {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-sos.is-live {
+    animation: none !important;
+  }
 }
