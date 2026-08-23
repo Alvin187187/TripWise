@@ -3,7 +3,9 @@ dist/
 build/
 .cache/
 .env*
+!.env.example
 .vite/
+__pycache__/
 vite.config.*.timestamp-*
 *.tsbuildinfo
 *.log

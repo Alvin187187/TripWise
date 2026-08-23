@@ -4,6 +4,7 @@ import HistoryScreen from "./HistoryScreen";
 import Icon, { type IconName } from "./icons";
 import MapScreen from "./MapScreen";
 import LedgerScreen from "./LedgerScreen";
+import ChatPanel, { ChatFAB } from "./ChatPanel";
 import { applyCatchToTrips, fmtP, fmtSignedP, lastCatchTrip, seedTrips, summarizeJourney, tripCatchKg, type Budget, type SavedSpot, type TripRecord } from "./ledger";
 import { condWord, goLine, greet, statusLine, t, tideWord, waveNote, whatIfTalk, windNote, type Lang } from "./i18n";
 import { fmtBite, prettyWhen, useLive, type BiteWindow, type LiveBundle } from "./live";
@@ -824,22 +825,8 @@ function OnboardingScreen({ draft, lang, onLang, onComplete }: { draft?: FisherP
         <img src={mascotOnboarding} alt="Setup mascot" className="setup-mascot mascot-cut" />
       </div>
 
-      <div className="setup-warn">
-        <IconSlot name="alert" size={16} color={C.stay} title="Safety warning" />
-        <span>{t(lang, "setupWarn")}</span>
-      </div>
-
       <div className="setup-stack">
         <article className="tw-slide setup-card">
-          <label className="setup-label">{t(lang, "wika")}</label>
-          <div className="setup-pair">
-            {(["en", "fil"] as Lang[]).map((l) => (
-              <button key={l} type="button" className={lang === l ? "is-on" : ""} onClick={() => onLang(l)}>
-                {l === "en" ? "English" : "Filipino"}
-              </button>
-            ))}
-          </div>
-          <label className="setup-label">{t(lang, "selectLang")}</label>
           <label className="setup-label">{t(lang, "fisherName")} <em>{t(lang, "optional")}</em></label>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Mang Nardo" className="slot setup-input" />
         </article>
@@ -2026,6 +2013,7 @@ export default function App() {
   }, [screen]);
 
   const showNav = profile !== null && !["landing","login","onboarding"].includes(screen);
+  const [chatOpen, setChatOpen] = useState(false);
 
   return (
     <div className="app-shell">
@@ -2092,6 +2080,16 @@ export default function App() {
       </div>
 
       {showNav && <BottomNav current={screen} onNav={nav} lang={profile?.language ?? uiLang}/>}
+
+      {/* Pawi Chatbot */}
+      {showNav && !chatOpen && <ChatFAB onClick={() => setChatOpen(true)} />}
+      <ChatPanel
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        lang={profile?.language ?? uiLang}
+        profile={profile}
+        live={live.data}
+      />
     </div>
   );
 }
