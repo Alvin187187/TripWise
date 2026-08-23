@@ -4,13 +4,14 @@ import HistoryScreen from "./HistoryScreen";
 import Icon, { type IconName } from "./icons";
 import MapScreen from "./MapScreen";
 import LedgerScreen from "./LedgerScreen";
-import { applyCatchToTrips, fmtP, seedTrips, summarizeJourney, type Budget, type SavedSpot, type TripRecord } from "./ledger";
+import { applyCatchToTrips, fmtP, fmtSignedP, lastCatchTrip, seedTrips, summarizeJourney, tripCatchKg, type Budget, type SavedSpot, type TripRecord } from "./ledger";
+import { condWord, goLine, greet, statusLine, t, tideWord, waveNote, whatIfTalk, windNote, type Lang } from "./i18n";
+import { fmtBite, prettyWhen, useLive, type BiteWindow, type LiveBundle } from "./live";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Screen = "landing" | "login" | "onboarding" | "home" | "weather" | "math" | "whatif" | "map" | "catchlog" | "history" | "reference" | "settings";
 type Verdict = "GO" | "CAUTION" | "STAY";
 type MotorClass = "small" | "typical" | "heavier";
-type Lang = "en" | "fil";
 
 interface FisherProfile {
   name: string;
@@ -399,7 +400,7 @@ function TideGraph({ points }: { points: number[] }) {
       {["12A", "6AM", "12P", "6PM", "12A"].map((label, i) => (
         <text key={label + i} className="tide-graph__axis" x={padL + i * ((w - padL - padR) / 4)} y={h - 4}>{label}</text>
       ))}
-    </svg>
+      </svg>
   );
 }
 
@@ -483,6 +484,14 @@ function SpinSun() {
   );
 }
 
+function isNightBite(w: BiteWindow | null) {
+  if (!w) return false;
+  const start = w.start instanceof Date ? w.start : new Date(w.start);
+  if (Number.isNaN(start.getTime())) return false;
+  const hour = Number(start.toLocaleString("en-US", { hour: "numeric", hour12: false, timeZone: "Asia/Manila" }));
+  return hour < 6 || hour >= 18;
+}
+
 function MoonOnly() {
   return (
     <div className="moon-only" aria-hidden>
@@ -514,7 +523,7 @@ function EconDonut({ fuel, breakeven, expected, profit }: { fuel: number; breake
     { color: "#DC2626", value: fuel },
     { color: "#B45309", value: breakeven * 100 },
     { color: "#1A6BAD", value: expected * 100 },
-    { color: "#16A34A", value: Math.max(profit, 1) },
+    { color: profit >= 0 ? "#16A34A" : "#DC2626", value: Math.max(Math.abs(profit), 1) },
   ];
   const minShare = 0.14;
   const raw = parts.map((p) => Math.max(p.value, 1));
@@ -522,14 +531,14 @@ function EconDonut({ fuel, breakeven, expected, profit }: { fuel: number; breake
   let shares = raw.map((v) => Math.max(v / sum, minShare));
   const boost = shares.reduce((a, b) => a + b, 0);
   shares = shares.map((s) => s / boost);
-  const r = 46;
+  const r = 54;
   const c = 2 * Math.PI * r;
   const gap = 7;
   let offset = 0;
   return (
-    <div className="econ-donut" aria-label={`Estimated profit ${profit} pesos`}>
-      <svg width="132" height="132" viewBox="0 0 132 132">
-        <circle cx="66" cy="66" r={r} fill="none" stroke="#E4F2FC" strokeWidth="16" />
+    <div className="econ-donut" aria-label={`Estimated profit ${fmtSignedP(profit)}`}>
+      <svg width="148" height="148" viewBox="0 0 148 148">
+        <circle cx="74" cy="74" r={r} fill="none" stroke="#E4F2FC" strokeWidth="12" />
         {parts.map((p, i) => {
           const arc = Math.max(shares[i] * c - gap, 10);
           const dashOffset = -offset;
@@ -538,16 +547,16 @@ function EconDonut({ fuel, breakeven, expected, profit }: { fuel: number; breake
             <circle
               key={p.color}
               className="econ-donut__arc"
-              cx="66"
-              cy="66"
+              cx="74"
+              cy="74"
               r={r}
               fill="none"
               stroke={p.color}
-              strokeWidth="16"
+              strokeWidth="12"
               strokeLinecap="round"
               strokeDasharray={`${arc} ${c - arc}`}
               strokeDashoffset={dashOffset}
-              transform="rotate(-90 66 66)"
+              transform="rotate(-90 74 74)"
               style={{
                 ["--arc" as string]: arc,
                 ["--rest" as string]: c - arc,
@@ -556,10 +565,10 @@ function EconDonut({ fuel, breakeven, expected, profit }: { fuel: number; breake
             />
           );
         })}
-      </svg>
+    </svg>
       <div className="econ-donut__meta">
         <div className="econ-donut__hint">Est. profit</div>
-        <div className="econ-donut__num">+₱{profit}</div>
+        <div className={`econ-donut__num ${profit > 0 ? "is-gain" : profit < 0 ? "is-loss" : "is-even"}`}>{fmtSignedP(profit)}</div>
       </div>
     </div>
   );
@@ -584,7 +593,7 @@ function ScoreRing({ value }: { value: number }) {
           strokeDasharray={circ}
           strokeDashoffset={offset}
         />
-      </svg>
+    </svg>
       <div className="score-ring__meta">
         <Icon name="fish" size={16} color={C.go} />
         <span className="score-ring__num">{value}%</span>
@@ -655,14 +664,14 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
   );
 }
 
-function BottomNav({ current, onNav }: { current: Screen; onNav: (s: Screen) => void }) {
+function BottomNav({ current, onNav, lang }: { current: Screen; onNav: (s: Screen) => void; lang: Lang }) {
   const tabs = [
-    { id: "home"     as Screen, Icon: IcHome,    label: "Today"   },
-    { id: "weather"  as Screen, Icon: IcSun,     label: "Weather" },
-    { id: "map"      as Screen, Icon: IcMap,     label: "Map"     },
-    { id: "catchlog" as Screen, Icon: IcLog,     label: "Log"     },
-    { id: "history"  as Screen, Icon: IcHistory, label: "History" },
-    { id: "whatif"   as Screen, Icon: IcSliders, label: "What-If" },
+    { id: "home"     as Screen, Icon: IcHome,    label: t(lang, "navToday")   },
+    { id: "weather"  as Screen, Icon: IcSun,     label: t(lang, "navWeather") },
+    { id: "map"      as Screen, Icon: IcMap,     label: t(lang, "navMap")     },
+    { id: "catchlog" as Screen, Icon: IcLog,     label: t(lang, "navLog")     },
+    { id: "history"  as Screen, Icon: IcHistory, label: t(lang, "navHistory") },
+    { id: "whatif"   as Screen, Icon: IcSliders, label: t(lang, "navWhatIf") },
   ];
   return (
     <nav className="bottom-nav">
@@ -681,7 +690,7 @@ function BottomNav({ current, onNav }: { current: Screen; onNav: (s: Screen) => 
 }
 
 // ─── SCREEN: Landing ──────────────────────────────────────────────────────────
-function LandingScreen({ onNav }: { onNav: (s: Screen) => void }) {
+function LandingScreen({ lang, onStart, onReturn, onLang }: { lang: Lang; onStart: () => void; onReturn: () => void; onLang: (l: Lang) => void }) {
   return (
     <div className="landing">
       <PhotoWell src={photos.coverLanding} alt="Manila Bay waters" wash="navy" className="landing__cover" />
@@ -689,7 +698,7 @@ function LandingScreen({ onNav }: { onNav: (s: Screen) => void }) {
       {/* Logo */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 36 }}>
         <TripWiseLogo size={52}/>
-        <div style={{ color: "white", fontFamily: "var(--font-display)", fontSize: 26, fontWeight: 900, letterSpacing: "0.16em", lineHeight: 1 }}>TRIPWISE</div>
+          <div style={{ color: "white", fontFamily: "var(--font-display)", fontSize: 26, fontWeight: 900, letterSpacing: "0.16em", lineHeight: 1 }}>TRIPWISE</div>
       </div>
 
       {/* Mascot */}
@@ -700,17 +709,24 @@ function LandingScreen({ onNav }: { onNav: (s: Screen) => void }) {
       {/* Headline */}
       <div style={{ textAlign: "center", marginBottom: 44 }}>
         <h1 style={{ color: "white", fontFamily: "var(--font-display)", fontSize: 56, fontWeight: 900, lineHeight: 0.92, letterSpacing: "0.03em", margin: 0 }}>
-          FISH SMARTER.<br/><span style={{ color: "#7BC8F6" }}>STAY SAFER.</span>
+          {t(lang, "headline1")}<br/><span style={{ color: "#7BC8F6" }}>{t(lang, "headline2")}</span>
         </h1>
       </div>
 
       {/* CTA */}
       <div style={{ width: "100%", maxWidth: 340, display: "flex", flexDirection: "column", gap: 12 }}>
-        <KeyBtn block size="lg" variant="surface" className="key-btn--shine" onClick={() => onNav("login")}>
-          GET STARTED
+        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+          {(["en", "fil"] as Lang[]).map((l) => (
+            <button key={l} type="button" onClick={() => onLang(l)} style={{ padding: "7px 14px", borderRadius: 99, border: "1.5px solid rgba(255,255,255,0.45)", background: lang === l ? "#fff" : "transparent", color: lang === l ? "#0E4C81" : "#fff", fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+              {l === "en" ? "English" : "Filipino"}
+            </button>
+          ))}
+        </div>
+        <KeyBtn block size="lg" variant="surface" className="key-btn--shine" onClick={onStart}>
+          {t(lang, "getStarted")}
         </KeyBtn>
-        <button onClick={() => onNav("login")} style={{ width: "100%", minHeight: 48, borderRadius: 16, background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-body)", fontSize: 14, fontWeight: 500, border: "1px solid rgba(255,255,255,0.25)", cursor: "pointer" }}>
-          Already have an account? <strong>Log in</strong>
+        <button onClick={onReturn} style={{ width: "100%", minHeight: 48, borderRadius: 16, background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-body)", fontSize: 14, fontWeight: 500, border: "1px solid rgba(255,255,255,0.25)", cursor: "pointer" }}>
+          {t(lang, "haveAccountLead")} <strong>{t(lang, "logInWord")}</strong>
         </button>
       </div>
     </div>
@@ -718,7 +734,7 @@ function LandingScreen({ onNav }: { onNav: (s: Screen) => void }) {
 }
 
 // ─── SCREEN: Login ────────────────────────────────────────────────────────────
-function LoginScreen({ onNav, onSuccess }: { onNav: (s: Screen) => void; onSuccess: () => void }) {
+function LoginScreen({ lang, onNav, onSuccess }: { lang: Lang; onNav: (s: Screen) => void; onSuccess: () => void }) {
   const [phone, setPhone] = useState("");
   const digits = phone.replace(/\D/g, "").slice(0, 10);
   const valid = digits.length === 10 && digits.startsWith("9");
@@ -736,16 +752,16 @@ function LoginScreen({ onNav, onSuccess }: { onNav: (s: Screen) => void; onSucce
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32 }}>
           <div>
             <h2 style={{ color: C.text, fontFamily: "var(--font-display)", fontSize: 36, fontWeight: 900, lineHeight: 1, letterSpacing: "0.03em", margin: 0 }}>
-              ENTER YOUR<br/><span style={{ color: C.blue }}>MOBILE</span><br/>NUMBER
+              {t(lang, "loginTitle1")}<br/><span style={{ color: C.blue }}>{t(lang, "loginTitle2")}</span><br/>{t(lang, "loginTitle3")}
             </h2>
             <p style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 13, lineHeight: 1.6, marginTop: 12, marginBottom: 0, maxWidth: 200 }}>
-              Your number is your account — no password needed.
+              {t(lang, "loginHint")}
             </p>
           </div>
           <MascotSlot size={84} alt="TripWise mascot" src={mascotFront} />
         </div>
 
-        <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Mobile Number</div>
+        <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{t(lang, "mobileNumber")}</div>
         <div className="slot-wrap" style={{ marginBottom: 10, boxShadow: valid ? `inset 4px 4px 8px #C2D9EF, inset -4px -4px 8px #FFFFFF, 0 0 0 2px ${C.go}` : undefined }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 14px", borderRight: `1px solid ${C.border}`, flexShrink: 0 }}>
             <IconSlot name="flag" size={22} color={C.blue} title="Philippines" />
@@ -756,39 +772,38 @@ function LoginScreen({ onNav, onSuccess }: { onNav: (s: Screen) => void; onSucce
           {valid && <div style={{ display: "flex", alignItems: "center", padding: "0 14px" }}><IconSlot name="check-circle" size={20} color={C.go} title="Valid" /></div>}
         </div>
 
-        {digits.length > 0 && !valid && <div style={{ color: C.stay, fontFamily: "var(--font-body)", fontSize: 12, marginBottom: 12 }}>Must be 10 digits starting with 9 (e.g. 917 123 4567)</div>}
+        {digits.length > 0 && !valid && <div style={{ color: C.stay, fontFamily: "var(--font-body)", fontSize: 12, marginBottom: 12 }}>{t(lang, "loginInvalid")}</div>}
 
         <div style={{ flex: 1 }}/>
         <KeyBtn block size="lg" onClick={onSuccess} disabled={!valid}>
-          LOG IN
+          {t(lang, "logIn")}
         </KeyBtn>
-        <p style={{ textAlign: "center", color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 11, marginTop: 16, lineHeight: 1.7 }}>By logging in you agree to TripWise Terms of Service and Privacy Policy.</p>
+        <p style={{ textAlign: "center", color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 11, marginTop: 16, lineHeight: 1.7 }}>{t(lang, "loginLegal")}</p>
       </div>
     </div>
   );
 }
 
 // ─── SCREEN: Onboarding ───────────────────────────────────────────────────────
-function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => void }) {
-  const [lang, setLang] = useState<Lang>("en");
-  const [name, setName] = useState("");
-  const [motor, setMotor] = useState<MotorClass>("typical");
-  const [durationInput, setDurationInput] = useState("5");
-  const [ground, setGround] = useState("");
+function OnboardingScreen({ draft, lang, onLang, onComplete }: { draft?: FisherProfile | null; lang: Lang; onLang: (l: Lang) => void; onComplete: (p: FisherProfile) => void }) {
+  const [name, setName] = useState(draft?.name && draft.name !== "Demo Fisher" ? draft.name : "");
+  const [motor, setMotor] = useState<MotorClass>(draft?.motorClass ?? "typical");
+  const [durationInput, setDurationInput] = useState(String(draft?.tripDuration ?? 5));
+  const [ground, setGround] = useState(draft?.fishingGround ?? "");
   const [groundOpen, setGroundOpen] = useState(false);
-  const [gear, setGear] = useState("");
-  const [extraGrounds, setExtraGrounds] = useState<string[]>([]);
-  const [extraHours, setExtraHours] = useState<number[]>([]);
-  const [extraGear, setExtraGear] = useState<string[]>([]);
+  const [gear, setGear] = useState(draft?.gear ?? "");
+  const [extraGrounds, setExtraGrounds] = useState<string[]>(draft?.extraGrounds ?? []);
+  const [extraHours, setExtraHours] = useState<number[]>(draft?.extraHours ?? []);
+  const [extraGear, setExtraGear] = useState<string[]>(draft?.extraGear ?? []);
 
   const allGrounds = [...FISHING_GROUNDS, ...extraGrounds.filter((g) => !FISHING_GROUNDS.includes(g))];
   const allHours = [...BASE_HOURS, ...extraHours.filter((h) => !BASE_HOURS.includes(h))].sort((a, b) => a - b);
   const allGear = [...BASE_GEAR, ...extraGear.filter((g) => !BASE_GEAR.includes(g))];
 
   const motorOptions: { id: MotorClass; label: string; sub: string }[] = [
-    { id: "small",   label: "Small",   sub: "~2.5 L/h" },
-    { id: "typical", label: "Typical", sub: "4.2 L/h" },
-    { id: "heavier", label: "Heavier", sub: "6.5 L/h" },
+    { id: "small",   label: t(lang, "motorSmall"),   sub: "~2.5 L/h" },
+    { id: "typical", label: t(lang, "motorTypical"), sub: "4.2 L/h" },
+    { id: "heavier", label: t(lang, "motorHeavier"), sub: "6.5 L/h" },
   ];
 
   const durationVal = parseFloat(durationInput) || 0;
@@ -804,32 +819,33 @@ function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => vo
         <TripWiseLogo size={36}/>
         <div style={{ flex: 1 }}>
           <div className="app-bar__title">TRIPWISE</div>
-          <div className="app-bar__sub">Worth the fuel. Safe home.</div>
-        </div>
+          <div className="app-bar__sub">{t(lang, "tagline")}</div>
+          </div>
         <img src={mascotOnboarding} alt="Setup mascot" className="setup-mascot mascot-cut" />
       </div>
 
       <div className="setup-warn">
         <IconSlot name="alert" size={16} color={C.stay} title="Safety warning" />
-        <span>If the sea is dangerous, STAY — always.</span>
+        <span>{t(lang, "setupWarn")}</span>
       </div>
 
       <div className="setup-stack">
         <article className="tw-slide setup-card">
-          <label className="setup-label">Wika / Language</label>
+          <label className="setup-label">{t(lang, "wika")}</label>
           <div className="setup-pair">
             {(["en", "fil"] as Lang[]).map((l) => (
-              <button key={l} type="button" className={lang === l ? "is-on" : ""} onClick={() => setLang(l)}>
+              <button key={l} type="button" className={lang === l ? "is-on" : ""} onClick={() => onLang(l)}>
                 {l === "en" ? "English" : "Filipino"}
               </button>
             ))}
           </div>
-          <label className="setup-label">Fisher name <em>(optional)</em></label>
+          <label className="setup-label">{t(lang, "selectLang")}</label>
+          <label className="setup-label">{t(lang, "fisherName")} <em>{t(lang, "optional")}</em></label>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Mang Nardo" className="slot setup-input" />
         </article>
 
         <article className="tw-slide setup-card">
-          <label className="setup-label">Boat motor</label>
+          <label className="setup-label">{t(lang, "boatMotor")}</label>
           <div className="setup-motors">
             {motorOptions.map((opt) => (
               <button key={opt.id} type="button" className={motor === opt.id ? "is-on" : ""} onClick={() => setMotor(opt.id)}>
@@ -838,7 +854,7 @@ function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => vo
               </button>
             ))}
           </div>
-          <label className="setup-label">Typical trip duration</label>
+          <label className="setup-label">{t(lang, "tripHours")}</label>
           <div className="slot-wrap setup-hours">
             <input
               type="number"
@@ -851,7 +867,7 @@ function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => vo
               placeholder="5"
               className="slot setup-input"
             />
-            <span>hours</span>
+            <span>{t(lang, "hours")}</span>
           </div>
           <div className="setup-hours-picks">
             {allHours.map((h) => (
@@ -873,13 +889,13 @@ function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => vo
         </article>
 
         <article className="tw-slide setup-card">
-          <label className="setup-label">Primary fishing ground</label>
+          <label className="setup-label">{t(lang, "fishingGround")}</label>
           <div className="setup-ground">
             <input
               value={ground}
               onChange={(e) => { setGround(e.target.value); setGroundOpen(true); }}
               onFocus={() => setGroundOpen(true)}
-              placeholder="Type or pick..."
+              placeholder={t(lang, "typeOrPick")}
               className="slot setup-input"
             />
             <button type="button" className="setup-chev" onClick={() => setGroundOpen((v) => !v)} aria-label="Ground list">
@@ -907,7 +923,7 @@ function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => vo
               setGroundOpen(false);
             }}
           />
-          <label className="setup-label">Gear type</label>
+          <label className="setup-label">{t(lang, "gearType")}</label>
           <input value={gear} onChange={(e) => setGear(e.target.value)} placeholder="e.g. Gillnet, Kawil..." className="slot setup-input" />
           <div className="setup-chips">
             {allGear.map((g) => (
@@ -927,7 +943,7 @@ function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => vo
           />
         </article>
 
-        <button
+          <button
           type="button"
           onClick={() => {
             const hours = durationVal || 5;
@@ -951,17 +967,17 @@ function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => vo
                 : [...extraGear, gearVal],
             });
           }}
-          disabled={!canContinue}
+            disabled={!canContinue}
           className="key-btn key-btn--primary key-btn--lg key-btn--block"
         >
-          CONTINUE TO APP
-        </button>
+            {t(lang, "continueApp")}
+          </button>
         <button
           type="button"
           className="setup-skip"
           onClick={() => onComplete({
             name: "Demo Fisher",
-            language: "en",
+            language: lang,
             motorClass: "typical",
             tripDuration: 5,
             fishingGround: DEFAULT_GROUND,
@@ -969,22 +985,26 @@ function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => vo
             ...emptyExtras(),
           })}
         >
-          Skip for demo mode
-        </button>
+            {t(lang, "skipDemo")}
+          </button>
       </div>
     </div>
   );
 }
 
 // ─── SCREEN: Home (Today) ─────────────────────────────────────────────────────
-function HomeScreen({ profile, onNav }: { profile: FisherProfile; onNav: (s: Screen) => void }) {
+function HomeScreen({ profile, trips, live, onNav }: { profile: FisherProfile; trips: TripRecord[]; live: LiveBundle | null; onNav: (s: Screen) => void }) {
+  const lang = profile.language ?? "en";
+  const diesel = live?.diesel ?? DIESEL_PRICE;
   const lph = MOTOR_LPH[profile.motorClass];
-  const fuelCost = Math.round(lph * profile.tripDuration * DIESEL_PRICE);
+  const fuelCost = Math.round(lph * profile.tripDuration * diesel);
   const breakeven = Math.round((fuelCost / TAMBAN_PRICE) * 10) / 10;
-  const expected = 11.0;
+  const last = lastCatchTrip(trips);
+  const expected = last ? tripCatchKg(last) : 11.0;
   const profit = Math.round(expected * TAMBAN_PRICE - fuelCost);
-  const score = 82;
+  const score = live?.score ?? 0;
   const firstName = profile.name.split(" ")[0];
+  const lastKg = last ? tripCatchKg(last) : 0;
 
   return (
     <div className="dash">
@@ -993,22 +1013,22 @@ function HomeScreen({ profile, onNav }: { profile: FisherProfile; onNav: (s: Scr
           <TripWiseLogo size={40} />
           <div>
             <div className="home-bar__title">TRIPWISE</div>
-            <div className="home-bar__hint">Worth the fuel. Safe home.</div>
+            <div className="home-bar__hint">{t(lang, "tagline")}</div>
           </div>
         </div>
         <KeyBtn variant="danger" size="sm" onClick={() => {}}>
           <IconSlot name="lifebuoy" size={16} color="#fff" title="SOS" />
           SOS
         </KeyBtn>
-        <button onClick={() => onNav("settings")} className="icon-key" aria-label="Settings">
+        <button onClick={() => onNav("settings")} className="icon-key" aria-label={t(lang, "settings")}>
           <IcGear size={18} color="white" />
         </button>
       </header>
       <div className="sync-strip">
         <IconSlot name="cloud-check" size={16} color={C.go} title="Offline cache" />
         <div>
-          <div className="sync-strip__title">Cached off-grid · Safety ready</div>
-          <div className="sync-strip__sub">Last sync <span>5:42 AM</span></div>
+          <div className="sync-strip__title">{t(lang, "cachedReady")}</div>
+          <div className="sync-strip__sub">{t(lang, "lastSync")} <span>{live ? prettyWhen(live.fetchedAt) : t(lang, "waiting")}</span></div>
         </div>
       </div>
 
@@ -1016,25 +1036,25 @@ function HomeScreen({ profile, onNav }: { profile: FisherProfile; onNav: (s: Scr
         <article className="hello-card dash-card">
           <div className="hello-card__mascot">
             <img src={mascotHome} alt="TripWise mascot" className="mascot-slot" />
-          </div>
+            </div>
           <div className="hello-card__body">
             <div className="speech">
               <p className="speech__text">
-                Good morning, <span className="speech__name">{firstName}</span>!
+                {greet(lang)}, <span className="speech__name">{firstName}</span>!
               </p>
-            </div>
+              </div>
             <div className="hello-card__score">
-              <div className="hello-card__label">Today&apos;s fishing score</div>
+              <div className="hello-card__label">{t(lang, "todayScore")}</div>
               <div className="hello-card__score-row">
                 <ScoreRing value={score} />
                 <div>
-                  <div className="hello-card__status">GOOD TRIP INDICATION</div>
+                  <div className="hello-card__status">{statusLine(lang, live?.call)}</div>
                   <div className="hello-note">
-                    <IconSlot name="shield-check" size={16} color={C.go} title="Safety status" />
-                    No gale warnings
-                  </div>
-                </div>
-              </div>
+                    <IconSlot name={live?.gale ? "alert" : "shield-check"} size={16} color={live?.gale ? C.stay : C.go} title="Safety status" />
+                    {live?.gale ? live.galeText : t(lang, "noGale")}
+            </div>
+            </div>
+          </div>
             </div>
           </div>
         </article>
@@ -1042,19 +1062,19 @@ function HomeScreen({ profile, onNav }: { profile: FisherProfile; onNav: (s: Scr
         <article className="sky-card">
           <SkyToys />
           <div className="sky-card__place">{profile.fishingGround.split(" ")[0]}<br />Manila Bay</div>
-          <div className="sky-card__date">Sat, 22 Aug 2026</div>
+          <div className="sky-card__date">{live ? prettyWhen(live.fetchedAt) : t(lang, "fetchingWx")}</div>
           <div className="sky-card__hero">
-            <div className="sky-card__temp">29°</div>
+            <div className="sky-card__temp">{live ? `${live.temp}°` : "—"}</div>
             <div className="sky-card__meta">
-              <div className="sky-card__cond">Partly cloudy<br />Rain 30%</div>
-              <div className="sky-card__scale">Celsius</div>
-            </div>
+              <div className="sky-card__cond">{live ? <>{condWord(lang, live.condition)}<br />{t(lang, "rain")} {live.rainChance}%</> : t(lang, "loadingForecast")}</div>
+              <div className="sky-card__scale">{t(lang, "celsius")}</div>
+          </div>
           </div>
           <div className="weather-grid">
             {[
-              { icon: "weather-windy" as const, label: "Wind", value: "12 km/h", note: "Light breezes" },
-              { icon: "waves" as const, label: "Waves", value: "0.8m", note: "Safe 2.0m" },
-              { icon: "waves-arrow-up" as const, label: "Tide", value: "Rising", note: "9:14 AM" },
+              { icon: "weather-windy" as const, label: t(lang, "wind"), value: live ? `${live.windKmh} km/h` : "…", note: live ? windNote(lang, live.windLabel) : "Open-Meteo" },
+              { icon: "waves" as const, label: t(lang, "waves"), value: live ? `${live.waveM}m` : "…", note: live ? waveNote(lang, live.waveNote) : t(lang, "marineModel") },
+              { icon: "waves-arrow-up" as const, label: t(lang, "tide"), value: live ? tideWord(lang, live.tideTrend) : "…", note: live ? `${live.tideM}m · ${live.tideNext}` : "Sea level" },
             ].map((cell) => (
               <div key={cell.label} className="weather-grid__cell">
                 <span className="weather-grid__icon">
@@ -1067,48 +1087,51 @@ function HomeScreen({ profile, onNav }: { profile: FisherProfile; onNav: (s: Scr
             ))}
           </div>
           <button type="button" className="fill-btn fill-btn--in-card" onClick={() => onNav("weather")}>
-            <span className="fill-btn__label">View Weather</span>
+            <span className="fill-btn__label">{t(lang, "viewWeather")}</span>
           </button>
         </article>
 
         <div className="mini-slides">
-          <article className="mini-slide">
-            <div className="mini-slide__icon"><SpinSun /></div>
-            <div className="mini-slide__name">Major Peak Bite</div>
-            <div className="mini-slide__time">5:48 – 7:52 AM</div>
+          {([
+            { name: t(lang, "majorBite"), window: live?.majorBite ?? null },
+            { name: t(lang, "minorBite"), window: live?.minorBite ?? null },
+          ] as const).map((bite) => {
+            const night = isNightBite(bite.window);
+            return (
+          <article key={bite.name} className={`mini-slide ${night ? "mini-slide--night" : ""}`}>
+            <div className="mini-slide__icon">{night ? <MoonOnly /> : <SpinSun />}</div>
+            <div className="mini-slide__name">{bite.name}</div>
+            <div className="mini-slide__time">{fmtBite(bite.window)}</div>
           </article>
-          <article className="mini-slide mini-slide--night">
-            <div className="mini-slide__icon"><MoonOnly /></div>
-            <div className="mini-slide__name">Minor Peak Bite</div>
-            <div className="mini-slide__time">11:36 AM – 12:24 PM</div>
-          </article>
+            );
+          })}
           <article className="mini-slide mini-slide--wide">
             <div className="fuel-copy">
               <div className="hello-card__label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <IconSlot name="gas-station" size={18} color={C.blue} title="Fuel" />
-                Fuel forecast
+                {t(lang, "fuelForecast")}
               </div>
-              <div className="mini-slide__value">₱{DIESEL_PRICE.toFixed(2)}</div>
-              <div className="mini-slide__time">Average per liter · DOE</div>
-              <div className="delta delta--up">
-                <IconSlot name="trending-up" size={16} color={C.go} title="Increase" />
-                +0.32% vs yesterday
-              </div>
+              <div className="mini-slide__value">₱{(live?.diesel ?? DIESEL_PRICE).toFixed(2)}</div>
+              <div className="mini-slide__time">{live?.dieselSource ?? "DOE"}</div>
+              <div className={`delta ${(live?.dieselDeltaPct ?? 0) >= 0 ? "delta--up" : "delta--down"}`}>
+                <IconSlot name={(live?.dieselDeltaPct ?? 0) >= 0 ? "trending-up" : "trending-down"} size={16} color={(live?.dieselDeltaPct ?? 0) >= 0 ? C.stay : C.go} title="Fuel change" />
+                {live?.dieselDeltaPct == null ? t(lang, "liveDoe") : `${live.dieselDeltaPct > 0 ? "+" : ""}${live.dieselDeltaPct}% ${t(lang, "vsLast")}`}
+          </div>
             </div>
             <img src={mascotHistory} alt="" className="fuel-mascot" />
           </article>
-        </div>
+            </div>
 
         <Card style={{ padding: "18px 18px 16px" }}>
-          <SectionTitle action="Show the Math" onAction={() => onNav("math")}>Trip Economics (Est.)</SectionTitle>
+          <SectionTitle action={t(lang, "showMath")} onAction={() => onNav("math")}>{t(lang, "tripEcon")}</SectionTitle>
           <div className="econ-layout">
             <EconDonut fuel={fuelCost} breakeven={breakeven} expected={expected} profit={profit} />
             <ul className="econ-list">
               {[
-                { label: "Trip cost (fuel)", value: `₱${fuelCost.toLocaleString()}`, color: "#DC2626" },
-                { label: "Break-even", value: `${breakeven} kg`, color: "#B45309" },
-                { label: "Expected", value: `${expected} kg`, color: "#1A6BAD" },
-                { label: "Est. profit", value: `+₱${profit}`, color: C.go },
+                { label: t(lang, "tripCost"), value: `₱${fuelCost.toLocaleString()}`, color: "#DC2626" },
+                { label: t(lang, "breakeven"), value: `${breakeven} kg`, color: "#B45309" },
+                { label: t(lang, "expected"), value: `${expected} kg`, color: "#1A6BAD" },
+                { label: t(lang, "estProfit"), value: fmtSignedP(profit), color: profit > 0 ? C.go : profit < 0 ? C.stay : C.blue },
               ].map((row) => (
                 <li key={row.label} className="econ-list__row">
                   <span className="econ-list__dot" style={{ background: row.color }} />
@@ -1134,19 +1157,19 @@ function HomeScreen({ profile, onNav }: { profile: FisherProfile; onNav: (s: Scr
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
             <div>
-              <div className="label">Last fishing spot</div>
-              <div className="hello-card__label" style={{ marginTop: 4, color: C.text }}>{profile.fishingGround.split(" ")[0]} Ground</div>
+              <div className="label">{t(lang, "lastSpot")}</div>
+              <div className="hello-card__label" style={{ marginTop: 4, color: C.text }}>{last?.location || profile.fishingGround}</div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div className="label">Last catch</div>
-              <div className="econ-list__value" style={{ marginTop: 4 }}>11.0 kg</div>
+              <div className="label">{t(lang, "lastCatch")}</div>
+              <div className="econ-list__value" style={{ marginTop: 4 }}>{lastKg ? `${lastKg} kg` : t(lang, "noCatch")}</div>
             </div>
           </div>
         </SceneCard>
 
-        <KeyBtn block size="lg" variant="go" onClick={() => onNav("catchlog")}>
+        <KeyBtn block size="lg" variant="go" onClick={() => onNav("map")}>
           <IconSlot name="ferry" size={18} color="#fff" title="Start departure" />
-          START DEPARTURE LOG
+          {t(lang, "startDepart")}
         </KeyBtn>
       </div>
     </div>
@@ -1154,9 +1177,17 @@ function HomeScreen({ profile, onNav }: { profile: FisherProfile; onNav: (s: Scr
 }
 
 // ─── SCREEN: Weather & Conditions ─────────────────────────────────────────────
-function WeatherScreen({ onBack }: { onBack: () => void }) {
+function condKind(code: number): "sun" | "cloud" | "rain" {
+  if (code === 0) return "sun";
+  if (code <= 3) return "cloud";
+  return "rain";
+}
+
+function WeatherScreen({ onBack, live, lang }: { onBack: () => void; live: LiveBundle | null; lang: Lang }) {
   const [weekMode, setWeekMode] = useState<"temp" | "wind" | "precip">("temp");
-  const hourlyData = [
+  const hourlyData = live?.hourly.length
+    ? live.hourly.map((d) => ({ h: d.label, temp: d.temp, humid: d.humid, wind: d.wind, rain: d.rain }))
+    : [
     { h: "12A", temp: 27, humid: 84, wind: 8, rain: 8 },
     { h: "1AM", temp: 27, humid: 85, wind: 8, rain: 10 },
     { h: "2AM", temp: 26, humid: 86, wind: 7, rain: 8 },
@@ -1182,7 +1213,18 @@ function WeatherScreen({ onBack }: { onBack: () => void }) {
     { h: "10P", temp: 27, humid: 85, wind: 9, rain: 10 },
     { h: "11P", temp: 27, humid: 85, wind: 8, rain: 8 },
   ];
-  const weeklyData = [
+  const weeklyData = live?.daily.length
+    ? live.daily.map((d) => ({
+        day: d.day,
+        cond: condKind(d.code),
+        temp: Math.round(d.temp),
+        hpa: 1012,
+        windMph: Math.round(d.wind),
+        dir: live.windLabel.split("·").pop()?.trim() || "—",
+        rain: Math.round(d.rain),
+        inch: Math.round((d.rain / 100) * 0.4 * 100) / 100,
+      }))
+    : [
     { day: "Mon", cond: "sun" as const, temp: 29, hpa: 1012, windMph: 7, dir: "NE", rain: 15, inch: 0.04 },
     { day: "Tue", cond: "cloud" as const, temp: 30, hpa: 1010, windMph: 8, dir: "E", rain: 25, inch: 0.08 },
     { day: "Wed", cond: "rain" as const, temp: 31, hpa: 1006, windMph: 11, dir: "SE", rain: 45, inch: 0.22 },
@@ -1191,56 +1233,58 @@ function WeatherScreen({ onBack }: { onBack: () => void }) {
     { day: "Sat", cond: "sun" as const, temp: 28, hpa: 1013, windMph: 7, dir: "W", rain: 20, inch: 0.06 },
     { day: "Sun", cond: "cloud" as const, temp: 29, hpa: 1011, windMph: 8, dir: "NW", rain: 30, inch: 0.11 },
   ];
-  const tidePoints = [2.8, 3.6, 4.2, 4.6, 4.1, 3.2, 2.1, 1.2, 0.8, 0.7, 1.0, 1.8, 2.7, 3.5, 4.2, 4.6, 4.0, 3.1, 2.0, 1.3, 0.9, 0.8, 1.1, 1.9];
+  const tidePoints = live?.hourly.length ? live.hourly.map((h) => h.tide) : [2.8, 3.6, 4.2, 4.6, 4.1, 3.2, 2.1, 1.2, 0.8, 0.7, 1.0, 1.8, 2.7, 3.5, 4.2, 4.6, 4.0, 3.1, 2.0, 1.3, 0.9, 0.8, 1.1, 1.9];
+  const goBanner = goLine(lang, live?.call);
+  const laterRain = live?.hourly.find((h) => new Date(h.time).getHours() >= 14);
 
-  return (
+    return (
     <div className="dash wx-page">
-      <AppBar title="WEATHER & CONDITIONS" sub="Navotas Coast" onBack={onBack} />
+      <AppBar title={t(lang, "wxTitle")} sub="Navotas Coast" onBack={onBack} />
       <div className="screen-pad">
         <article className="sky-card pang-card">
           <div className="pang-card__hero">
             <div className="pang-card__copy">
               <div className="pang-card__kicker">Pangisdaan Score</div>
-              <div className="pang-card__go">GO / PUMALAOT</div>
+              <div className="pang-card__go">{goBanner}</div>
+      </div>
+            <SpeedGauge value={live?.score ?? 0} />
             </div>
-            <SpeedGauge value={82} />
-          </div>
           <div className="pang-card__notes">
             {[
-              { icon: "weather-rainy" as IconName, title: "Low rainfall", detail: "30% chance AM" },
-              { icon: "weather-windy" as IconName, title: "Moderate wind", detail: "12 km/h NE" },
-              { icon: "waves" as IconName, title: "Calm waves", detail: "0.8m average" },
+              { icon: "weather-rainy" as IconName, title: live ? `${live.rainChance}% ${t(lang, "rain")}` : t(lang, "rainfall"), detail: live ? condWord(lang, live.condition) : "Open-Meteo" },
+              { icon: "weather-windy" as IconName, title: live ? `${live.windKmh} km/h` : t(lang, "wind"), detail: live ? windNote(lang, live.windLabel) : "Open-Meteo" },
+              { icon: "waves" as IconName, title: live ? `${live.waveM}m ${t(lang, "waves")}` : t(lang, "waves"), detail: live ? waveNote(lang, live.waveNote) : t(lang, "marineModel") },
             ].map((t) => (
               <div key={t.title} className="pang-card__note">
                 <IconSlot name={t.icon} size={16} color={C.go} />
                 <div>
                   <div className="pang-card__note-title">{t.title}</div>
                   <div className="pang-card__note-detail">{t.detail}</div>
-                </div>
+            </div>
               </div>
             ))}
             <div className="pang-card__note pang-card__note--warn">
               <IconSlot name="alert" size={16} color={C.caution} title="Caution" />
               <div>
-                <div className="pang-card__note-title">Rain &amp; wind expected</div>
-                <div className="pang-card__note-detail">After 2 PM</div>
-              </div>
+                <div className="pang-card__note-title">{live?.gale ? live.galeText : t(lang, "afternoonCheck")}</div>
+                <div className="pang-card__note-detail">{laterRain ? `${laterRain.rain}% ${t(lang, "rain")} · ${laterRain.wind} km/h ${t(lang, "after2pm")}` : "Open-Meteo hourly"}</div>
             </div>
+          </div>
           </div>
         </article>
 
         <section className="dash-card now-card">
-          <div className="dash-title">Right Now (Navotas Coast)</div>
+          <div className="dash-title">{t(lang, "rightNow")}</div>
           <div className="now-grid">
             {[
-              { label: "Temperature", value: "29°C", note: "Feels 31°", kind: "thermo" as const },
-              { label: "Rain Probability", value: "40%", note: "Light drizzle", kind: "rain" as const },
-              { label: "Wind Force", value: "12 km/h", note: "NE", kind: "wind" as const },
-              { label: "Tide Curve", value: "0.6m", note: "Rising", kind: "tide" as const },
-              { label: "Humidity", value: "78%", note: "Muggy air", kind: "humid" as const },
-              { label: "Visibility", value: "8 km", note: "Clear", kind: "eye" as const },
-              { label: "Sunrise", value: "5:42 AM", note: "First light", kind: "rise" as const },
-              { label: "Sunset", value: "6:18 PM", note: "Last light", kind: "set" as const },
+              { label: t(lang, "temp"), value: live ? `${live.temp}°C` : "…", note: live ? `${t(lang, "feels")} ${live.feels}°` : "Open-Meteo", kind: "thermo" as const },
+              { label: t(lang, "rainProb"), value: live ? `${live.rainChance}%` : "…", note: live ? condWord(lang, live.condition) : "Forecast", kind: "rain" as const },
+              { label: t(lang, "windForce"), value: live ? `${live.windKmh} km/h` : "…", note: live ? windNote(lang, live.windLabel) : "Forecast", kind: "wind" as const },
+              { label: t(lang, "tideCurve"), value: live ? `${live.tideM}m` : "…", note: live ? tideWord(lang, live.tideTrend) : "Sea level", kind: "tide" as const },
+              { label: t(lang, "humidity"), value: live ? `${live.humidity}%` : "…", note: t(lang, "relative"), kind: "humid" as const },
+              { label: t(lang, "visibility"), value: live?.visibilityKm != null ? `${live.visibilityKm} km` : "…", note: t(lang, "clearIfHigh"), kind: "eye" as const },
+              { label: t(lang, "sunrise"), value: live?.sunrise ?? "…", note: t(lang, "firstLight"), kind: "rise" as const },
+              { label: t(lang, "sunset"), value: live?.sunset ?? "…", note: t(lang, "lastLight"), kind: "set" as const },
             ].map((item) => (
               <article key={item.label} className="now-tile">
                 <Wx3D kind={item.kind} />
@@ -1255,12 +1299,12 @@ function WeatherScreen({ onBack }: { onBack: () => void }) {
         </section>
 
         <section>
-          <div className="dash-title" style={{ marginBottom: 10 }}>7-day forecast</div>
+          <div className="dash-title" style={{ marginBottom: 10 }}>{t(lang, "weekForecast")}</div>
           <div className="wx-tabs">
             {([
-              { id: "temp" as const, label: "Temperature" },
-              { id: "wind" as const, label: "Wind" },
-              { id: "precip" as const, label: "Precipitation" },
+              { id: "temp" as const, label: t(lang, "temp") },
+              { id: "wind" as const, label: t(lang, "wind") },
+              { id: "precip" as const, label: t(lang, "precip") },
             ]).map((t) => (
               <button
                 key={t.id}
@@ -1269,16 +1313,16 @@ function WeatherScreen({ onBack }: { onBack: () => void }) {
                 onClick={() => setWeekMode(t.id)}
               >
                 {t.label}
-              </button>
-            ))}
-          </div>
+                </button>
+              ))}
+            </div>
           <div className="week-row" key={weekMode}>
             {weeklyData.map((d) => (
               <article key={d.day} className="day-slide">
                 <div className="day-slide__day">{d.day}</div>
                 <div className="day-slide__icon">
                   {weekMode === "wind" ? <WindVane dir={d.dir} /> : <Wx3D kind={d.cond} />}
-                </div>
+          </div>
                 {weekMode === "temp" && (
                   <>
                     <div className="day-slide__value">{d.temp}°</div>
@@ -1288,7 +1332,7 @@ function WeatherScreen({ onBack }: { onBack: () => void }) {
                 {weekMode === "wind" && (
                   <>
                     <div className="day-slide__value">{d.windMph}</div>
-                    <div className="day-slide__meta">{d.dir} · mph</div>
+                    <div className="day-slide__meta">{d.dir} · km/h</div>
                   </>
                 )}
                 {weekMode === "precip" && (
@@ -1303,31 +1347,31 @@ function WeatherScreen({ onBack }: { onBack: () => void }) {
         </section>
 
         <section className="dash-card tide-card">
-          <div className="dash-title">Tides Level</div>
+          <div className="dash-title">{t(lang, "tidesLevel")}</div>
           <TideGraph points={tidePoints} />
           <div className="tide-pair">
             <article className="mini-slide">
               <div className="mini-slide__icon"><Wx3D kind="tide-high" /></div>
-              <div className="mini-slide__name">Highest Tide</div>
-              <div className="mini-slide__time">4.6 ft · 4:10 PM</div>
+              <div className="mini-slide__name">{t(lang, "highTide")}</div>
+              <div className="mini-slide__time">{live ? `${live.highTide.m}m · ${live.highTide.at}` : "…"}</div>
             </article>
             <article className="mini-slide mini-slide--night">
               <div className="mini-slide__icon"><Wx3D kind="tide-low" /></div>
-              <div className="mini-slide__name">Lowest Tide</div>
-              <div className="mini-slide__time">0.7 ft · 9:40 AM</div>
+              <div className="mini-slide__name">{t(lang, "lowTide")}</div>
+              <div className="mini-slide__time">{live ? `${live.lowTide.m}m · ${live.lowTide.at}` : "…"}</div>
             </article>
           </div>
         </section>
 
         <section className="dash-card hour-card">
-          <div className="dash-title">Hourly Trends (24 Hours)</div>
+          <div className="dash-title">{t(lang, "hourly")}</div>
           <div className="hour-scroll">
             <div className="hour-labels">
               {hourlyData.map((d) => (
                 <div key={d.h}>{d.h}</div>
               ))}
-            </div>
-            {[
+          </div>
+          {[
               { label: "Temp (°C)", data: hourlyData.map((d) => d.temp), color: "#F97316" },
               { label: "Humid (%)", data: hourlyData.map((d) => d.humid), color: "#0EA5E9" },
               { label: "Wind (km/h)", data: hourlyData.map((d) => d.wind), color: C.blue },
@@ -1336,8 +1380,8 @@ function WeatherScreen({ onBack }: { onBack: () => void }) {
               <div key={series.label} className="hour-row">
                 <div className="hour-row__label">{series.label}</div>
                 <MiniChart data={series.data} color={series.color} dense />
-              </div>
-            ))}
+            </div>
+          ))}
           </div>
         </section>
       </div>
@@ -1346,34 +1390,36 @@ function WeatherScreen({ onBack }: { onBack: () => void }) {
 }
 
 // ─── SCREEN: Trip Formula Matrix ──────────────────────────────────────────────
-function MathScreen({ profile, onBack }: { profile: FisherProfile; onBack: () => void }) {
+function MathScreen({ profile, live, onBack }: { profile: FisherProfile; live: LiveBundle | null; onBack: () => void }) {
+  const lang = profile.language;
   const lph = MOTOR_LPH[profile.motorClass];
   const liters = lph * profile.tripDuration;
-  const fuelCost = Math.round(liters * DIESEL_PRICE);
+  const diesel = live?.diesel ?? DIESEL_PRICE;
+  const fuelCost = Math.round(liters * diesel);
   const breakeven = Math.round((fuelCost / TAMBAN_PRICE) * 10) / 10;
   const expected = 11.0;
   const ratio = Math.round((expected / breakeven) * 100) / 100;
 
   return (
     <div style={{ minHeight: "100%", background: C.bg, paddingBottom: 80 }}>
-      <AppBar title="TRIP FORMULA MATRIX" onBack={onBack}/>
+      <AppBar title={t(lang, "mathTitle")} onBack={onBack}/>
       <div className="screen-pad">
         <Card screws style={{ padding: 20 }}>
-          <div style={{ color: C.blue, fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 900, letterSpacing: "0.04em", marginBottom: 6 }}>Not a black box.</div>
-          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 13, lineHeight: 1.6 }}>We compute raw safety thresholds and economic viability in real time using local market and weather endpoints.</div>
+          <div style={{ color: C.blue, fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 900, letterSpacing: "0.04em", marginBottom: 6 }}>{t(lang, "mathIntro")}</div>
+          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 13, lineHeight: 1.6 }}>{t(lang, "mathBody")}</div>
         </Card>
 
         <Card screws style={{ padding: 20 }}>
           <SectionTitle>System Inputs</SectionTitle>
           <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
             {[
-              { label: "DOE Navotas, 6:00 AM Today", key: "Diesel Price", value: `₱${DIESEL_PRICE.toFixed(2)} / L` },
+              { label: live?.dieselSource ?? "DOE NCR pump watch", key: t(lang, "dieselPrice"), value: `₱${diesel.toFixed(2)} / L` },
               { label: "Your setup profile", key: "Typical Motor Cons.", value: `${lph} L/h × ${profile.tripDuration}h = ${liters} Liters` },
-              { label: "211 L × ₱68 + allowance", key: "Trip Cost (Fuel only)", value: `₱${fuelCost.toLocaleString()}` },
+              { label: `${liters} L × ₱${diesel.toFixed(2)}`, key: "Trip Cost (Fuel only)", value: `₱${fuelCost.toLocaleString()}` },
               { label: "Navotas Fish Port Union average", key: "Tamban/Galunggong Price", value: `₱${TAMBAN_PRICE}.00 / kg` },
               { label: "Historical logs + Moon phase + Tide factor", key: "Expected catch target", value: `${expected} kg` },
-              { label: "Open Meteo marine forecast, 5:45 AM", key: "Wave Height", value: "0.8m" },
-              { label: "PAGASA official data feeds", key: "Storm/Gale Signals", value: "None active" },
+              { label: "Open-Meteo marine forecast", key: "Wave Height", value: live ? `${live.waveM}m` : "…" },
+              { label: "PAGASA gale warning desk", key: "Storm/Gale Signals", value: live?.gale ? live.galeText : t(lang, "noneActive") },
             ].map((row, i, arr) => (
               <div key={row.key} style={{ padding: "10px 0", borderBottom: i < arr.length - 1 ? `1px solid ${C.borderLight}` : "none" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -1422,17 +1468,24 @@ function MathScreen({ profile, onBack }: { profile: FisherProfile; onBack: () =>
 }
 
 // ─── SCREEN: What-If Simulator ────────────────────────────────────────────────
-function WhatIfScreen({ profile, trips, onBack }: { profile: FisherProfile; trips: TripRecord[]; onBack: () => void }) {
+function WhatIfScreen({ profile, trips, live, onBack }: { profile: FisherProfile; trips: TripRecord[]; live: LiveBundle | null; onBack: () => void }) {
+  const lang = profile.language;
   const lph = MOTOR_LPH[profile.motorClass];
   const book = summarizeJourney(trips);
   const firstName = profile.name.split(" ")[0];
-  const [fuelPrice, setFuelPrice] = useState(DIESEL_PRICE);
+  const [fuelPrice, setFuelPrice] = useState(live?.diesel ?? DIESEL_PRICE);
   const [catchKg, setCatchKg] = useState(Math.round(book.avgKgOut || 11));
   const [tripHrs, setTripHrs] = useState(profile.tripDuration);
   const [fishPrice, setFishPrice] = useState(TAMBAN_PRICE);
-  const [waveHt, setWaveHt] = useState(0.8);
+  const [waveHt, setWaveHt] = useState(live?.waveM ?? 0.8);
   const [preset, setPreset] = useState<string | null>(null);
   const [showMath, setShowMath] = useState(false);
+
+  useEffect(() => {
+    if (!live) return;
+    setFuelPrice(live.diesel);
+    setWaveHt(live.waveM);
+  }, [live?.fetchedAt]);
 
   const fuelCost = Math.round(lph * tripHrs * fuelPrice);
   const otherCost = 300;
@@ -1443,17 +1496,10 @@ function WhatIfScreen({ profile, trips, onBack }: { profile: FisherProfile; trip
   const verdict: Verdict = waveHt > 2.0 ? "STAY" : netProfit > 500 ? "GO" : netProfit > 0 ? "CAUTION" : "STAY";
   const profitTone = netProfit > 0 ? "go" : netProfit < 0 ? "stay" : "even";
 
-  const talk =
-    waveHt > 2
-      ? `Waves at ${waveHt.toFixed(1)}m beat any catch. I would stay, even at ${catchKg} kg.`
-      : netProfit > 500
-        ? `Waves are ${waveHt.toFixed(1)}m and this trip clears ${fmtP(netProfit)} after fuel and the ₱${otherCost} ice/food pad. I would go.`
-        : netProfit > 0
-          ? `You beat break-even (${breakeven} kg), but only ${fmtP(netProfit)} is left. Thin water. Caution.`
-          : `This trip would lose ${fmtP(netProfit)}. Stay for the money.`;
+  const talk = whatIfTalk(lang, waveHt, catchKg, netProfit, breakeven, otherCost, fmtP);
 
   const presets = [
-    { label: "Diesel +₱5", action: () => { setFuelPrice(DIESEL_PRICE + 5); setPreset("Diesel +₱5"); } },
+    { label: "Diesel +₱5", action: () => { setFuelPrice((live?.diesel ?? DIESEL_PRICE) + 5); setPreset("Diesel +₱5"); } },
     { label: "Bad Day (4kg)", action: () => { setCatchKg(4); setPreset("Bad Day (4kg)"); } },
     { label: "Rough Sea (2.1m)", action: () => { setWaveHt(2.1); setPreset("Rough Sea (2.1m)"); } },
   ];
@@ -1463,10 +1509,10 @@ function WhatIfScreen({ profile, trips, onBack }: { profile: FisherProfile; trip
       <div className="app-bar">
         <button type="button" onClick={onBack} className="icon-key" aria-label="Back"><IcBack size={20} color="white"/></button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="app-bar__title">WHAT IF</div>
-          <div className="app-bar__sub">Knobs and result stay on one screen.</div>
-        </div>
-        <VerdictBadge verdict={verdict}/>
+          <div className="app-bar__title">{t(lang, "whatIfTitle")}</div>
+          <div className="app-bar__sub">{t(lang, "whatIfSub")}</div>
+          </div>
+          <VerdictBadge verdict={verdict}/>
       </div>
 
       <div className="whatif-desk">
@@ -1475,7 +1521,7 @@ function WhatIfScreen({ profile, trips, onBack }: { profile: FisherProfile; trip
           <div className="whatif-live__text">
             <p><span>{firstName}</span>, {talk}</p>
             <div className={`whatif-live__num ledger-profit--${profitTone}`}>{fmtP(netProfit)}</div>
-          </div>
+        </div>
           <div className="whatif-live__ticks">
             <span>Break-even <b>{breakeven} kg</b></span>
             <span>Fuel <b>{fmtP(fuelCost)}</b></span>
@@ -1502,11 +1548,11 @@ function WhatIfScreen({ profile, trips, onBack }: { profile: FisherProfile; trip
               <b>{s.display}</b>
             </label>
           ))}
-          {waveHt > 2.0 && <div className="whatif-warn">Waves over 2.0m force STAY, even at 20 kg.</div>}
+          {waveHt > 2.0 && <div className="whatif-warn">{t(lang, "wavesForce")}</div>}
         </article>
 
         <button type="button" className="tw-slide history-ref" onClick={() => setShowMath((v) => !v)}>
-          {showMath ? "Hide the math" : "Show the math"}
+          {showMath ? t(lang, "hideMath") : t(lang, "showMath")}
         </button>
         {showMath && (
           <article className="tw-slide whatif-math">
@@ -1685,7 +1731,7 @@ function CatchLogScreen({ profile, onBack, onSave }: { profile: FisherProfile; o
         <div style={{ textAlign: "center", color: C.go, fontFamily: "var(--font-body)", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
           <IconSlot name="cloud-check" size={16} color={C.go} title="Logged offline" />
           Logged offline. Syncs automatically in tomorrow's math engine.
-        </div>
+      </div>
       </div>
     </div>
   );
@@ -1744,13 +1790,12 @@ function ReferenceScreen({ onBack }: { onBack: () => void }) {
 }
 
 // ─── SCREEN: Settings ─────────────────────────────────────────────────────────
-function SettingsScreen({ profile, onBack, onReset, onProfile }: { profile: FisherProfile; onBack: () => void; onReset: () => void; onProfile: (p: FisherProfile) => void }) {
-  const [lang, setLang] = useState<Lang>(profile.language);
+function SettingsScreen({ profile, onBack, onReset, onProfile, onLang }: { profile: FisherProfile; onBack: () => void; onReset: () => void; onProfile: (p: FisherProfile) => void; onLang: (l: Lang) => void }) {
+  const lang = profile.language ?? "en";
   const [contact, setContact] = useState("+63 917 123 4567");
   const [editContact, setEditContact] = useState(false);
 
   const lph = MOTOR_LPH[profile.motorClass];
-  const motorLabel = { small: "Small", typical: "Typical", heavier: "Heavier" }[profile.motorClass];
   const extras = { extraGrounds: profile.extraGrounds ?? [], extraHours: profile.extraHours ?? [], extraGear: profile.extraGear ?? [] };
   const allGrounds = [
     ...FISHING_GROUNDS,
@@ -1772,19 +1817,18 @@ function SettingsScreen({ profile, onBack, onReset, onProfile }: { profile: Fish
     <div style={{ minHeight: "100%", background: C.bg, paddingBottom: 80 }}>
       <div className="app-bar">
         <button onClick={onBack} className="icon-key" aria-label="Back"><IcBack size={20} color="white"/></button>
-        <div className="app-bar__title" style={{ flex: 1 }}>APP CONFIGURATION</div>
+        <div className="app-bar__title" style={{ flex: 1 }}>{t(lang, "settingsTitle")}</div>
         <div style={{ color: "rgba(255,255,255,0.7)", fontFamily: "var(--font-body)", fontSize: 13 }}>Kuya {profile.name.split(" ")[0]}</div>
       </div>
 
       <div className="screen-pad">
         {/* Language */}
-        <Card screws style={{ padding: 20 }}>
-          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: 10 }}>Wika / App Language</div>
+        <Card screws style={{ padding: 20, overflow: "visible" }}>
+          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: 8 }}>{t(lang, "wikaApp")}</div>
+          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>{t(lang, "selectLang")}</div>
           <div style={{ display: "flex", gap: 8 }}>
-            <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", alignSelf: "center" }}>SELECT LANGUAGE / PUMILI NG WIKA</div>
-            <div style={{ flex: 1 }}/>
             {(["en","fil"] as Lang[]).map(l => (
-              <button key={l} onClick={() => setLang(l)} style={{ padding: "7px 16px", borderRadius: 8, background: lang === l ? C.header : C.blueFaint, color: lang === l ? "white" : C.textSub, border: `1.5px solid ${lang === l ? C.header : C.border}`, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              <button key={l} type="button" onClick={() => { onLang(l); onProfile({ ...profile, language: l }); }} style={{ flex: 1, padding: "9px 12px", borderRadius: 8, background: lang === l ? C.header : C.blueFaint, color: lang === l ? "white" : C.textSub, border: `1.5px solid ${lang === l ? C.header : C.border}`, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                 {l === "en" ? "English" : "Filipino"}
               </button>
             ))}
@@ -1792,9 +1836,9 @@ function SettingsScreen({ profile, onBack, onReset, onProfile }: { profile: Fish
         </Card>
 
         <article className="tw-slide setup-card">
-          <div className="setup-label">Engine class</div>
-          <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{motorLabel} ({lph} L/h)</div>
-          <label className="setup-label">Typical trip duration</label>
+          <div className="setup-label">{t(lang, "engineClass")}</div>
+          <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{t(lang, profile.motorClass === "small" ? "motorSmall" : profile.motorClass === "heavier" ? "motorHeavier" : "motorTypical")} ({lph} L/h)</div>
+          <label className="setup-label">{t(lang, "tripHours")}</label>
           <div className="setup-hours-picks">
             {allHours.map((h) => (
               <button key={h} type="button" className={profile.tripDuration === h ? "is-on" : ""} onClick={() => onProfile({ ...profile, ...extras, tripDuration: h })}>
@@ -1816,14 +1860,14 @@ function SettingsScreen({ profile, onBack, onReset, onProfile }: { profile: Fish
               });
             }}
           />
-          <label className="setup-label">Primary fishing ground</label>
+          <label className="setup-label">{t(lang, "fishingGround")}</label>
           <div className="setup-chips">
             {allGrounds.map((g) => (
               <button key={g} type="button" className={profile.fishingGround === g ? "is-on" : ""} onClick={() => onProfile({ ...profile, ...extras, fishingGround: g })}>
                 {g}
               </button>
             ))}
-          </div>
+              </div>
           <AddOther
             placeholder="e.g. Malabon boundary"
             onAdd={(v) => {
@@ -1836,7 +1880,7 @@ function SettingsScreen({ profile, onBack, onReset, onProfile }: { profile: Fish
               });
             }}
           />
-          <label className="setup-label">Gear type</label>
+          <label className="setup-label">{t(lang, "gearType")}</label>
           <div className="setup-chips">
             {allGear.map((g) => (
               <button key={g} type="button" className={profile.gear === g ? "is-on" : ""} onClick={() => onProfile({ ...profile, ...extras, gear: g })}>
@@ -1860,25 +1904,25 @@ function SettingsScreen({ profile, onBack, onReset, onProfile }: { profile: Fish
 
         {/* Family contact */}
         <Card screws style={{ padding: 20 }}>
-          <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Family Emergency Safety Contact</div>
-          <div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>PRIMARY SMS CONTACT (WIFE)</div>
+          <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 700, marginBottom: 10 }}>{t(lang, "familyContact")}</div>
+          <div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{t(lang, "primarySms")}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {editContact
               ? <input value={contact} onChange={e => setContact(e.target.value)} style={{ flex: 1, padding: "10px 12px", border: `1.5px solid ${C.blue}`, borderRadius: 8, fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 700, color: C.text, outline: "none", background: C.blueFaint }} autoFocus/>
               : <div style={{ flex: 1, fontFamily: "var(--font-display)", fontSize: 18, fontWeight: 900, color: C.text }}>Rosa {contact}</div>
             }
             <button onClick={() => setEditContact(v => !v)} style={{ padding: "8px 16px", borderRadius: 8, background: C.blueFaint, border: `1px solid ${C.border}`, color: C.blue, fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-              {editContact ? "Save" : "Change"}
+              {editContact ? t(lang, "save") : t(lang, "change")}
             </button>
           </div>
         </Card>
 
         {/* System status */}
         <Card screws style={{ padding: 20 }}>
-          <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 700, marginBottom: 10 }}>System Status</div>
+          <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 700, marginBottom: 10 }}>{t(lang, "systemStatus")}</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
             {[
-              { label: "LAST SYNCHRONIZED", value: "5:42 AM Today" },
+              { label: t(lang, "lastSynced"), value: "5:42 AM Today" },
               { label: "CONNECTION LOOKUP", value: "Searching..." },
               { label: "LOCAL CACHE SIZE", value: "12 MB" },
               { label: "STATUS", value: "OFFLINE CACHED READY", color: C.go },
@@ -1907,7 +1951,7 @@ function SettingsScreen({ profile, onBack, onReset, onProfile }: { profile: Fish
             ))}
           </div>
           <button onClick={onReset} style={{ width: "100%", marginTop: 10, padding: "10px 0", background: "transparent", border: "none", cursor: "pointer", color: C.blue, fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 600 }}>
-            Reset Onboarding Decision Parameters
+            {t(lang, "resetSetup")}
           </button>
         </Card>
 
@@ -1925,14 +1969,57 @@ function SettingsScreen({ profile, onBack, onReset, onProfile }: { profile: Fish
 }
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
+function readStore<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function App() {
+  const [uiLang, setUiLang] = useState<Lang>(() => {
+    try {
+      const stored = localStorage.getItem("tripwise-lang");
+      if (stored === "en" || stored === "fil") return stored;
+    } catch { /* ignore */ }
+    const saved = readStore<FisherProfile | null>("tripwise-profile", null);
+    return saved?.language ?? "en";
+  });
+  const applyLang = useCallback((l: Lang) => {
+    setUiLang(l);
+    try { localStorage.setItem("tripwise-lang", l); } catch { /* ignore */ }
+    setProfile((p) => (p ? { ...p, language: l } : p));
+  }, []);
+  const [profile, setProfile] = useState<FisherProfile | null>(() => readStore("tripwise-profile", null));
   const [screen, setScreen] = useState<Screen>("landing");
-  const [profile, setProfile] = useState<FisherProfile | null>(null);
-  const [trips, setTrips] = useState<TripRecord[]>(() => seedTrips());
-  const [savedSpots, setSavedSpots] = useState<SavedSpot[]>([]);
-  const [budget, setBudget] = useState<Budget>({ period: "weekly", amount: 5000 });
+  const [loginIntent, setLoginIntent] = useState<"new" | "return">("new");
+  const [trips, setTrips] = useState<TripRecord[]>(() => readStore("tripwise-trips", seedTrips()));
+  const [savedSpots, setSavedSpots] = useState<SavedSpot[]>(() => readStore("tripwise-spots", []));
+  const [budget, setBudget] = useState<Budget>(() => readStore("tripwise-budget", { period: "weekly", amount: 5000 }));
+  const live = useLive();
   const scrollRef = useRef<HTMLDivElement>(null);
   const nav = useCallback((s: Screen) => setScreen(s), []);
+
+  const afterLogin = useCallback(() => {
+    if (loginIntent === "return" && profile) nav("home");
+    else nav("onboarding");
+  }, [loginIntent, profile, nav]);
+
+  useEffect(() => {
+    if (profile) localStorage.setItem("tripwise-profile", JSON.stringify(profile));
+    else localStorage.removeItem("tripwise-profile");
+  }, [profile]);
+  useEffect(() => {
+    localStorage.setItem("tripwise-trips", JSON.stringify(trips));
+  }, [trips]);
+  useEffect(() => {
+    localStorage.setItem("tripwise-spots", JSON.stringify(savedSpots));
+  }, [savedSpots]);
+  useEffect(() => {
+    localStorage.setItem("tripwise-budget", JSON.stringify(budget));
+  }, [budget]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
@@ -1944,19 +2031,35 @@ export default function App() {
     <div className="app-shell">
       <div ref={scrollRef} className="app-scroll">
         <div key={screen} className="screen-enter">
-          {screen === "landing"  && <LandingScreen onNav={nav}/>}
-          {screen === "login"    && <LoginScreen onNav={nav} onSuccess={() => { if (!profile) nav("onboarding"); else nav("home"); }}/>}
-          {screen === "onboarding" && <OnboardingScreen onComplete={p => { setProfile(p); nav("home"); }}/>}
+        {screen === "landing"  && (
+          <LandingScreen
+            lang={uiLang}
+            onLang={applyLang}
+            onStart={() => { setLoginIntent("new"); nav("login"); }}
+            onReturn={() => { setLoginIntent("return"); nav("login"); }}
+          />
+        )}
+        {screen === "login"    && <LoginScreen lang={uiLang} onNav={nav} onSuccess={afterLogin}/>}
+        {screen === "onboarding" && (
+          <OnboardingScreen
+            draft={profile}
+            lang={uiLang}
+            onLang={applyLang}
+            onComplete={(p) => { setProfile({ ...p, language: uiLang }); nav("home"); }}
+          />
+        )}
 
-          {profile && <>
-            {screen === "home"      && <HomeScreen profile={profile} onNav={nav}/>}
-            {screen === "weather"   && <WeatherScreen onBack={() => nav("home")}/>}
-            {screen === "math"      && <MathScreen profile={profile} onBack={() => nav("home")}/>}
-            {screen === "whatif"    && <WhatIfScreen profile={profile} trips={trips} onBack={() => nav("home")}/>}
+        {profile && <>
+          {screen === "home"      && <HomeScreen profile={profile} trips={trips} live={live.data} onNav={nav}/>}
+          {screen === "weather"   && <WeatherScreen lang={profile.language} live={live.data} onBack={() => nav("home")}/>}
+          {screen === "math"      && <MathScreen profile={profile} live={live.data} onBack={() => nav("home")}/>}
+            {screen === "whatif"    && <WhatIfScreen profile={profile} trips={trips} live={live.data} onBack={() => nav("home")}/>}
             {screen === "map"       && (
               <MapScreen
                 profile={profile}
                 savedSpots={savedSpots}
+                lang={profile.language}
+                diesel={live.data?.diesel ?? DIESEL_PRICE}
                 onSaveSpot={(spot) => setSavedSpots((s) => [spot, ...s])}
                 onSaveCatch={(input) => setTrips((t) => applyCatchToTrips(t, input))}
                 onBack={() => nav("home")}
@@ -1967,6 +2070,7 @@ export default function App() {
                 trips={trips}
                 budget={budget}
                 firstName={profile.name.split(" ")[0]}
+                lang={profile.language}
                 onBudget={setBudget}
                 onTrips={setTrips}
                 onBack={() => nav("home")}
@@ -1976,17 +2080,18 @@ export default function App() {
               <HistoryScreen
                 trips={trips}
                 firstName={profile.name.split(" ")[0]}
+                lang={profile.language}
                 onBack={() => nav("home")}
                 onReference={() => nav("reference")}
               />
             )}
-            {screen === "reference" && <ReferenceScreen onBack={() => nav("history")}/>}
-            {screen === "settings"  && <SettingsScreen profile={profile} onBack={() => nav("home")} onProfile={setProfile} onReset={() => { setProfile(null); nav("onboarding"); }}/>}
-          </>}
+          {screen === "reference" && <ReferenceScreen onBack={() => nav("history")}/>}
+            {screen === "settings"  && <SettingsScreen profile={profile} onLang={applyLang} onBack={() => nav("home")} onProfile={setProfile} onReset={() => { setProfile(null); nav("onboarding"); }}/>}
+        </>}
         </div>
       </div>
 
-      {showNav && <BottomNav current={screen} onNav={nav}/>}
+      {showNav && <BottomNav current={screen} onNav={nav} lang={profile?.language ?? uiLang}/>}
     </div>
   );
 }

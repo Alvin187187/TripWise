@@ -80,10 +80,24 @@ export function tripProfit(t: TripRecord) {
   return tripIncome(t) - tripExpenseTotal(t);
 }
 
+export function lastCatchTrip(trips: TripRecord[]) {
+  return trips
+    .filter((t) => tripCatchKg(t) > 0)
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date))[0] ?? null;
+}
+
 export function fmtP(n: number) {
   const abs = Math.abs(Math.round(n));
   const sign = n < 0 ? "-" : "";
   return `${sign}₱${abs.toLocaleString()}`;
+}
+
+export function fmtSignedP(n: number) {
+  const abs = Math.abs(Math.round(n));
+  if (n > 0) return `+₱${abs.toLocaleString()}`;
+  if (n < 0) return `−₱${abs.toLocaleString()}`;
+  return "₱0";
 }
 
 export function seedTrips(): TripRecord[] {

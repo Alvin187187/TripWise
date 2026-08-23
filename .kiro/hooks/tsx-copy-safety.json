@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "tsx-copy-safety",
+      "description": "Keep apostrophes valid and do not weaken STAY language after UI edits.",
+      "trigger": "PostFileSave",
+      "matcher": "src/.*\\.(tsx|ts)$",
+      "action": {
+        "type": "agent",
+        "prompt": "This TypeScript/TSX file was just saved. Check two things only: (1) no unescaped apostrophe inside a single-quoted string, (2) if the file touches GO/CAUTION/STAY or gale copy, STAY still means do not leave when the sea is dangerous. Fix only those issues. Do not refactor."
+      },
+      "enabled": true
+    }
+  ]
+}

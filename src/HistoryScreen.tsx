@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { mascotMath } from "./assets/media";
 import Icon from "./icons";
+import { t, type Lang } from "./i18n";
 import {
   EXPENSE_CATS,
   type TripRecord,
@@ -88,11 +89,13 @@ function TallBars({
 export default function HistoryScreen({
   trips,
   firstName,
+  lang = "en",
   onBack,
   onReference,
 }: {
   trips: TripRecord[];
   firstName: string;
+  lang?: Lang;
   onBack: () => void;
   onReference: () => void;
 }) {
@@ -120,8 +123,8 @@ export default function HistoryScreen({
           <Icon name="arrow-left" size={20} color="#fff" />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="app-bar__title">TRIP JOURNEY</div>
-          <div className="app-bar__sub">Insights from the trips you already logged.</div>
+          <div className="app-bar__title">{t(lang, "histTitle")}</div>
+          <div className="app-bar__sub">{t(lang, "histSub")}</div>
         </div>
       </div>
 
@@ -137,11 +140,11 @@ export default function HistoryScreen({
             />
             <div className="hist-hero__hole">
               <b>{j.go + j.caution}</b>
-              <small>went out</small>
+              <small>{t(lang, "wentOut")}</small>
             </div>
           </div>
           <div className="hist-hero__copy">
-            <p><span>{firstName}</span>, here is the split of every logged verdict.</p>
+            <p><span>{firstName}</span>, {t(lang, "histSplit")}</p>
             <ul>
               <li><i style={{ background: "#16A34A" }} /> GO {j.go}</li>
               <li><i style={{ background: "#B45309" }} /> CAUTION {j.caution}</li>

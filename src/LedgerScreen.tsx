@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { mascotPrice } from "./assets/media";
 import Icon from "./icons";
+import { t, type Lang } from "./i18n";
 import {
   EXPENSE_CATS,
   type Budget,
@@ -10,6 +11,7 @@ import {
   type TripRecord,
   addExpenseToTrip,
   fmtP,
+  fmtSignedP,
   prettyDate,
   tripCatchKg,
   tripExpenseTotal,
@@ -21,6 +23,7 @@ export default function LedgerScreen({
   trips,
   budget,
   firstName,
+  lang = "en",
   onBudget,
   onTrips,
   onBack,
@@ -28,6 +31,7 @@ export default function LedgerScreen({
   trips: TripRecord[];
   budget: Budget;
   firstName: string;
+  lang?: Lang;
   onBudget: (b: Budget) => void;
   onTrips: (t: TripRecord[]) => void;
   onBack: () => void;
@@ -56,7 +60,7 @@ export default function LedgerScreen({
   }, [trips, budget.amount]);
 
   const profitTone = totals.profit > 0 ? "go" : totals.profit < 0 ? "stay" : "even";
-  const profitStatus = totals.profit > 0 ? "IN THE GREEN" : totals.profit < 0 ? "IN THE RED" : "EVEN WATERS";
+  const profitStatus = totals.profit > 0 ? t(lang, "inGreen") : totals.profit < 0 ? t(lang, "inRed") : t(lang, "evenWaters");
 
   const open = trips.find((t) => t.id === openId) ?? null;
 
@@ -76,8 +80,8 @@ export default function LedgerScreen({
           <Icon name="arrow-left" size={20} color="#fff" />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="app-bar__title">FISHING LEDGER</div>
-          <div className="app-bar__sub">Record once. Calculate automatically.</div>
+          <div className="app-bar__title">{t(lang, "ledgerTitle")}</div>
+          <div className="app-bar__sub">{t(lang, "ledgerSub")}</div>
         </div>
       </div>
 
@@ -85,30 +89,30 @@ export default function LedgerScreen({
         <article className="tw-slide log-hi">
           <img src={mascotPrice} alt="Price mascot" className="log-hi__face mascot-cut" />
           <div className="log-hi__copy">
-            <p>Hi, <span>{firstName}</span></p>
-            <small>Your fishing book · {totals.monthTrips} trips in {totals.monthLabel}</small>
+            <p>{t(lang, "hi")} <span>{firstName}</span></p>
+            <small>{t(lang, "yourBook")} · {totals.monthTrips} {t(lang, "tripsIn")} {totals.monthLabel}</small>
           </div>
           <div className={`log-hi__net ledger-profit--${profitTone}`}>
-            <em>Net</em>
+            <em>{t(lang, "netWord")}</em>
             <b>{fmtP(totals.profit)}</b>
             <small>{profitStatus}</small>
           </div>
         </article>
         <div className="log-split">
           <article className="tw-slide log-chip log-chip--in">
-            <span>Income</span>
+            <span>{t(lang, "income")}</span>
             <b>{fmtP(totals.income)}</b>
-            <small>From saved catch</small>
+            <small>{t(lang, "fromCatch")}</small>
           </article>
           <article className="tw-slide log-chip log-chip--out">
-            <span>Expenses</span>
+            <span>{t(lang, "expenses")}</span>
             <b>{fmtP(totals.expenses)}</b>
-            <small>Fuel, ice, food, gear</small>
+            <small>{t(lang, "fuelIce")}</small>
           </article>
         </div>
         <article className="tw-slide log-limit">
           <div className="log-limit__row">
-            <span>Budget left · {budget.period}</span>
+            <span>{t(lang, "budgetLeftOf")} · {budget.period}</span>
             <b className={totals.remain >= 0 ? "is-go" : "is-stay"}>{fmtP(totals.remain)}</b>
           </div>
           <div className="ledger-budget__bar">
@@ -119,9 +123,9 @@ export default function LedgerScreen({
 
       <div className="ledger__tabs" role="tablist">
         {([
-          ["trips", "Trips"],
-          ["ledger", "Ledger"],
-          ["budget", "Budget"],
+          ["trips", t(lang, "tabTrips")],
+          ["ledger", t(lang, "tabLedger")],
+          ["budget", t(lang, "tabBudget")],
         ] as const).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? "is-on" : ""} onClick={() => { setTab(id); setOpenId(null); }}>
             {label}
@@ -132,22 +136,22 @@ export default function LedgerScreen({
       <div className="ledger__body">
         {tab === "trips" && !open && (
           <div className="log-trips">
-            {trips.map((t, i) => {
-              const inc = tripIncome(t);
-              const cost = tripExpenseTotal(t);
+            {trips.map((trip, i) => {
+              const inc = tripIncome(trip);
+              const cost = tripExpenseTotal(trip);
               const profit = inc - cost;
               return (
-                <button key={t.id} type="button" className="tw-slide log-trip" style={{ animationDelay: `${i * 40}ms` }} onClick={() => setOpenId(t.id)}>
+                <button key={trip.id} type="button" className="tw-slide log-trip" style={{ animationDelay: `${i * 40}ms` }} onClick={() => setOpenId(trip.id)}>
                   <div className="log-trip__top">
-                    <strong>{prettyDate(t.date)}</strong>
-                    <span className={`ledger-pill ledger-pill--${t.verdict.toLowerCase()}`}>{t.verdict}</span>
+                    <strong>{prettyDate(trip.date)}</strong>
+                    <span className={`ledger-pill ledger-pill--${trip.verdict.toLowerCase()}`}>{trip.verdict}</span>
                   </div>
-                  <div className="log-trip__place">{t.location}</div>
+                  <div className="log-trip__place">{trip.location}</div>
                   <div className="log-trip__nums">
-                    <span>{tripCatchKg(t) ? `${tripCatchKg(t)} kg` : "0 kg"}</span>
-                    <span className="is-go">{inc ? fmtP(inc) : "—"}</span>
-                    <span className="is-cost">{cost ? fmtP(cost) : "—"}</span>
-                    <span className={profit > 0 ? "is-go" : profit < 0 ? "is-stay" : ""}>{inc || cost ? fmtP(profit) : "—"}</span>
+                    <span><small>{t(lang, "wt")}</small>{tripCatchKg(trip) ? `${tripCatchKg(trip)} kg` : "0 kg"}</span>
+                    <span className="is-go"><small>{t(lang, "rev")}</small>{inc ? fmtP(inc) : "—"}</span>
+                    <span className="is-cost"><small>{t(lang, "exp")}</small>{cost ? fmtP(cost) : "—"}</span>
+                    <span className={profit > 0 ? "is-go" : profit < 0 ? "is-stay" : ""}><small>{t(lang, "net")}</small>{inc || cost ? fmtSignedP(profit) : "—"}</span>
                   </div>
                 </button>
               );

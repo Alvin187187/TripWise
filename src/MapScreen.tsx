@@ -4,6 +4,7 @@ import maplibreWorker from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { mascotHistory, mascotMap, photos } from "./assets/media";
 import Icon, { type IconName } from "./icons";
+import { t, type Lang } from "./i18n";
 import { SPECIES, SPOT_META, uid, type SavedSpot, type SpotCat } from "./ledger";
 
 setWorkerUrl(maplibreWorker);
@@ -79,32 +80,6 @@ function pathLength(pts: { lat: number; lng: number }[]) {
   let km = 0;
   for (let i = 1; i < pts.length; i++) km += kmBetween(pts[i - 1], pts[i]);
   return km;
-}
-
-function qrCells(payload: string) {
-  const n = 21;
-  const cells: boolean[] = [];
-  let h = 2166136261;
-  for (let i = 0; i < payload.length; i++) {
-    h ^= payload.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  for (let y = 0; y < n; y++) {
-    for (let x = 0; x < n; x++) {
-      const finder =
-        (x < 7 && y < 7) || (x > n - 8 && y < 7) || (x < 7 && y > n - 8);
-      if (finder) {
-        const ix = x < 7 ? x : x - (n - 7);
-        const iy = y < 7 ? y : y - (n - 7);
-        const ring = ix === 0 || iy === 0 || ix === 6 || iy === 6 || (ix >= 2 && ix <= 4 && iy >= 2 && iy <= 4);
-        cells.push(ring);
-      } else {
-        const v = Math.imul(h ^ (x * 131 + y * 17), 2654435761) >>> 0;
-        cells.push((v & 3) !== 0);
-      }
-    }
-  }
-  return { n, cells };
 }
 
 function updateMeasureLayer(map: Map, pts: { lat: number; lng: number }[]) {
@@ -192,15 +167,36 @@ function todayIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+async function askCompass() {
+  const DOE = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
+  try {
+    if (typeof DOE.requestPermission === "function") await DOE.requestPermission();
+  } catch {
+    /* desktop / denied */
+  }
+}
+
+function mapsLink(lat: number, lng: number) {
+  return `https://maps.google.com/?q=${lat.toFixed(6)},${lng.toFixed(6)}`;
+}
+
+function qrSrc(lat: number, lng: number) {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=10&data=${encodeURIComponent(mapsLink(lat, lng))}`;
+}
+
 export default function MapScreen({
   profile,
   savedSpots,
+  diesel = DIESEL,
+  lang = "en",
   onSaveSpot,
   onSaveCatch,
-  onBack,
+  onBack: _onBack,
 }: {
   profile: FisherProfile;
   savedSpots: SavedSpot[];
+  lang?: Lang;
+  diesel?: number;
   onSaveSpot: (spot: SavedSpot) => void;
   onSaveCatch: (input: {
     date: string;
@@ -214,8 +210,12 @@ export default function MapScreen({
   }) => void;
   onBack: () => void;
 }) {
+  void _onBack;
   const wrapRef = useRef<HTMLDivElement>(null);
+  const shareRef = useRef<HTMLElement>(null);
   const mapRef = useRef<Map | null>(null);
+  const hereMark = useRef<Marker | null>(null);
+  const firstFix = useRef(true);
   const markersRef = useRef<Marker[]>([]);
   const measureRef = useRef<{ lat: number; lng: number }[]>([]);
   const recordTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -226,8 +226,10 @@ export default function MapScreen({
   const armedOk = useRef(false);
 
   const [ready, setReady] = useState(false);
-  const [heading, setHeading] = useState(246);
-  const [course, setCourse] = useState(246);
+  const [here, setHere] = useState(HOME);
+  const [gpsOk, setGpsOk] = useState(false);
+  const [heading, setHeading] = useState(0);
+  const [course, setCourse] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [spotsOpen, setSpotsOpen] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -268,8 +270,8 @@ export default function MapScreen({
   const measureKm = useMemo(() => pathLength(measurePts), [measurePts]);
   const measureHrs = measureKm / CRUISE_KMH;
   const measureL = measureHrs * lph;
-  const measureCost = measureL * DIESEL;
-  const pickKm = picked ? kmBetween(HOME, picked) : 0;
+  const measureCost = measureL * diesel;
+  const pickKm = picked ? kmBetween(here, picked) : 0;
 
   useEffect(() => {
     const map = mapRef.current;
@@ -308,9 +310,9 @@ export default function MapScreen({
 
     map.addControl(new NavigationControl({ showCompass: true, visualizePitch: false }), "top-right");
     const syncBearing = () => {
-      const b = wrapDeg(map.getBearing());
-      setHeading((h) => (document.body.dataset.twHasCompass === "1" ? h : wrapDeg(246 - b)));
-      setCourse((c) => (document.body.dataset.twHasCog === "1" ? c : wrapDeg(246 - b)));
+      const face = wrapDeg(-map.getBearing());
+      if (document.body.dataset.twHasCompass !== "1") setHeading(face);
+      if (document.body.dataset.twHasCog !== "1") setCourse(face);
     };
     map.on("rotate", syncBearing);
     map.on("rotateend", syncBearing);
@@ -323,7 +325,7 @@ export default function MapScreen({
       const homeEl = document.createElement("div");
       homeEl.className = "omap-home";
       homeEl.innerHTML = "<span class='omap-home__pulse'></span><span class='omap-home__dot'></span>";
-      new Marker({ element: homeEl, anchor: "center" }).setLngLat([HOME.lng, HOME.lat]).addTo(map);
+      hereMark.current = new Marker({ element: homeEl, anchor: "center" }).setLngLat([HOME.lng, HOME.lat]).addTo(map);
 
       SPOTS.forEach((s) => {
         const el = document.createElement("div");
@@ -365,20 +367,8 @@ export default function MapScreen({
       setSpotsOpen(false);
     });
 
-    const alignZoom = () => {
-      const shell = wrapRef.current?.closest(".omap");
-      const share = shell?.querySelector(".omap__share");
-      const ctrl = shell?.querySelector(".maplibregl-ctrl-top-right");
-      if (!shell || !share || !(ctrl instanceof HTMLElement)) return;
-      const top = share.getBoundingClientRect().top - shell.getBoundingClientRect().top;
-      ctrl.style.top = `${Math.round(top)}px`;
-    };
-    const ro = new ResizeObserver(() => {
-      map.resize();
-      alignZoom();
-    });
+    const ro = new ResizeObserver(() => map.resize());
     ro.observe(wrapRef.current);
-    map.on("load", alignZoom);
 
     return () => {
       window.clearTimeout(bootTimer);
@@ -401,23 +391,65 @@ export default function MapScreen({
       if (raw == null) return;
       document.body.dataset.twHasCompass = "1";
       setHeading(wrapDeg(raw));
-      if (document.body.dataset.twHasCog !== "1") setCourse(wrapDeg(raw + 4));
+      if (document.body.dataset.twHasCog !== "1") setCourse(wrapDeg(raw));
     };
+    window.addEventListener("deviceorientationabsolute", onOrient as EventListener, true);
     window.addEventListener("deviceorientation", onOrient, true);
+    void askCompass();
+
+    const applyFix = (pos: GeolocationPosition) => {
+      const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      setHere(next);
+      setGpsOk(true);
+      hereMark.current?.setLngLat([next.lng, next.lat]);
+      const map = mapRef.current;
+      if (map && firstFix.current) {
+        firstFix.current = false;
+        map.flyTo({ center: [next.lng, next.lat], zoom: 14.2, duration: 900 });
+      } else if (map && document.body.dataset.twShare === "1") {
+        map.easeTo({ center: [next.lng, next.lat], duration: 400 });
+      }
+      if (pos.coords.heading != null && !Number.isNaN(pos.coords.heading) && pos.coords.heading >= 0) {
+        document.body.dataset.twHasCog = "1";
+        setCourse(wrapDeg(pos.coords.heading));
+      }
+    };
+
     let watch = 0;
     if (navigator.geolocation) {
-      watch = navigator.geolocation.watchPosition((pos) => {
-        if (pos.coords.heading != null && !Number.isNaN(pos.coords.heading)) {
-          document.body.dataset.twHasCog = "1";
-          setCourse(wrapDeg(pos.coords.heading));
-        }
-      }, () => undefined, { enableHighAccuracy: true, maximumAge: 2000 });
+      navigator.geolocation.getCurrentPosition(applyFix, () => setGpsOk(false), { enableHighAccuracy: true, timeout: 12000 });
+      watch = navigator.geolocation.watchPosition(applyFix, () => undefined, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
     }
     return () => {
+      window.removeEventListener("deviceorientationabsolute", onOrient as EventListener, true);
       window.removeEventListener("deviceorientation", onOrient, true);
       if (watch) navigator.geolocation.clearWatch(watch);
     };
   }, []);
+
+  useEffect(() => {
+    document.body.dataset.twShare = sharing ? "1" : "0";
+    if (sharing) {
+      void askCompass();
+      mapRef.current?.easeTo({ center: [here.lng, here.lat], duration: 500 });
+    }
+  }, [sharing, here.lat, here.lng]);
+
+  useEffect(() => {
+    const root = wrapRef.current?.parentElement;
+    const share = shareRef.current;
+    if (!root || !share) return;
+    const sync = () => {
+      const r = root.getBoundingClientRect();
+      const s = share.getBoundingClientRect();
+      root.style.setProperty("--omap-zoom-top", `${Math.max(72, s.top - r.top)}px`);
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(share);
+    ro.observe(root);
+    return () => ro.disconnect();
+  }, [ready]);
 
   useEffect(() => {
     document.body.dataset.twMeasure = measuring ? "1" : "0";
@@ -450,16 +482,16 @@ export default function MapScreen({
   }
 
   function openSpot(seed?: { lat: number; lng: number; title?: string }) {
-    const lat = seed?.lat ?? picked?.lat ?? HOME.lat;
-    const lng = seed?.lng ?? picked?.lng ?? HOME.lng;
+    const lat = seed?.lat ?? picked?.lat ?? here.lat;
+    const lng = seed?.lng ?? picked?.lng ?? here.lng;
     setSpotForm({ title: seed?.title ?? "", lat, lng, catchKg: "", note: "", category: "spot" });
     setSheet("spot");
     setMenuOpen(false);
   }
 
   function openCatch(location?: string) {
-    const lat = picked?.lat ?? HOME.lat;
-    const lng = picked?.lng ?? HOME.lng;
+    const lat = picked?.lat ?? here.lat;
+    const lng = picked?.lng ?? here.lng;
     const loc = location ?? (picked ? "Picked map point" : SPOTS[0].name);
     setCatchForm((f) => ({
       ...f,
@@ -473,7 +505,7 @@ export default function MapScreen({
   }
 
   function startMeasure(seed?: { lat: number; lng: number }) {
-    const first = seed ?? picked ?? HOME;
+    const first = seed ?? picked ?? here;
     setMeasuring(true);
     setMeasurePts([first]);
     setSheet(null);
@@ -537,7 +569,7 @@ export default function MapScreen({
     setRecSec(0);
     recKmRef.current = 0;
     setRecKm(0);
-    setRecPts([HOME]);
+    setRecPts([here]);
     setStopHold(0);
     setMenuOpen(false);
     setSheet(null);
@@ -549,7 +581,7 @@ export default function MapScreen({
       const step = 0.00012;
       const rad = (headingRef.current * Math.PI) / 180;
       setRecPts((pts) => {
-        const last = pts[pts.length - 1] ?? HOME;
+        const last = pts[pts.length - 1] ?? here;
         return [...pts, { lat: last.lat + Math.cos(rad) * step, lng: last.lng + Math.sin(rad) * step }];
       });
     }, 1000);
@@ -585,7 +617,6 @@ export default function MapScreen({
     if (kind) ping(`${kind} saved · ${recKmRef.current.toFixed(2)} km`);
   }
 
-  const qr = useMemo(() => qrCells(`tripwise://gps/${HOME.lat},${HOME.lng}`), []);
   const ring = 2 * Math.PI * 26;
   const actions: { id: string; label: string; icon: IconName; tone: "navy" | "sky" | "mint"; hold?: RecordKind; run?: () => void }[] = [
     { id: "spot", label: "Save Spot", icon: "map-marker-plus", tone: "navy", run: () => openSpot() },
@@ -601,7 +632,7 @@ export default function MapScreen({
       <div ref={wrapRef} className="omap__canvas" aria-label="Offline map" />
       {!ready && <div className="omap__boot">Loading Manila Bay tiles…</div>}
 
-      <div className="omap-compass" aria-live="polite">
+      <div className="omap-compass" aria-live="polite" onClick={() => void askCompass()}>
         <div className="omap-compass__window">
           <div className="omap-compass__tape" style={{ transform: `translateX(calc(50% - ${tapeShift}px))` }}>
             {COMPASS_TICKS.map((t) => (
@@ -621,32 +652,34 @@ export default function MapScreen({
       <header className="omap__chrome">
         <div className="omap__titlechip">
           <div className="omap__titlechip-copy">
-            <div className="omap__kicker">OFFLINE MAP</div>
+            <div className="omap__kicker">{t(lang, "offlineMap")}</div>
             <div className="omap__title">Manila Bay</div>
-            <div className="omap__gps">{fmtCoord(HOME.lat, HOME.lng)}</div>
+            <div className="omap__gps">{fmtCoord(here.lat, here.lng)}{gpsOk ? "" : ` · ${t(lang, "waitingGps")}`}</div>
           </div>
-          <img src={mascotMap} alt="TripWise location and safety mascot" className="omap__mascot mascot-cut" />
+          <div className="omap__mascot" title="Location and Safety">
+            <img src={mascotMap} alt="TripWise location and safety mascot" />
+          </div>
         </div>
-        <aside className="omap__share">
+        <aside ref={shareRef} className="omap__share">
         <div className="omap__share-row">
           <div>
-            <div className="omap__share-label">Location Sharing</div>
-            <div className="omap__share-sub">{sharing ? "Live GPS on" : "GPS hidden"}</div>
+            <div className="omap__share-label">{t(lang, "locShare")}</div>
+            <div className="omap__share-sub">{sharing ? t(lang, "gpsLive") : t(lang, "gpsHidden")}</div>
           </div>
           <button
             type="button"
             className={`omap-toggle ${sharing ? "is-on" : ""}`}
-            aria-label="Location Sharing"
+            aria-label={t(lang, "locShare")}
             aria-pressed={sharing}
             onClick={() => setSharing((v) => !v)}
           >
             <span />
           </button>
         </div>
-          <button type="button" className="omap__qr-mini" onClick={() => setSheet("qr")}>
-            <Icon name="qrcode" size={16} color="#0E4C81" />
-            Share GPS via QR
-          </button>
+        <button type="button" className="omap__qr-mini" onClick={() => setSheet("qr")}>
+          <Icon name="qrcode" size={16} color="#0E4C81" />
+          {t(lang, "shareQr")}
+        </button>
         </aside>
       </header>
 
@@ -711,7 +744,7 @@ export default function MapScreen({
         <div className="omap-dock__lift">
           <button type="button" className="omap-history-btn" onClick={() => setSheet("history")}>
             <img src={mascotHistory} alt="" />
-            <span>Trip History</span>
+            <span>{t(lang, "tripHistory")}</span>
           </button>
           <div className="omap__fabs">
             {menuOpen && (
@@ -771,7 +804,7 @@ export default function MapScreen({
         >
           <button type="button" className="omap-spots__peek" onClick={() => setSpotsOpen((v) => !v)}>
             <i />
-            Familiar fishing spots
+            {t(lang, "familiarSpots")}
           </button>
           <div className="omap-spots__list" hidden={!spotsOpen}>
             {SPOTS.map((s) => (
@@ -940,14 +973,14 @@ export default function MapScreen({
       {sheet === "qr" && (
         <div className="omap-sheet omap-sheet--qr">
           <div className="omap-sheet__bar">
-            <b>Share GPS location</b>
+            <b>{t(lang, "shareGpsLoc")}</b>
             <button type="button" onClick={() => setSheet(null)} aria-label="Close"><Icon name="close" size={18} color="#0B2237" /></button>
           </div>
-          <p>{`Scan to open ${profile.name}'s live boat pin. Works even when Location Sharing is off — they get this snapshot.`}</p>
-          <div className="omap-qr" style={{ gridTemplateColumns: `repeat(${qr.n}, 1fr)` }}>
-            {qr.cells.map((on, i) => <i key={i} className={on ? "is-on" : ""} />)}
-          </div>
-          <div className="omap-qr__cap">{fmtCoord(HOME.lat, HOME.lng)}</div>
+          <p>{t(lang, "scanGps")}</p>
+          <img className="omap-qr-img" src={qrSrc(here.lat, here.lng)} alt="QR code for current GPS coordinates" />
+          <a className="omap-qr__link" href={mapsLink(here.lat, here.lng)} target="_blank" rel="noreferrer">
+            {fmtCoord(here.lat, here.lng)}
+          </a>
         </div>
       )}
 
