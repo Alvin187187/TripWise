@@ -519,9 +519,9 @@ GPS data is only accessed when the user explicitly enables location sharing. No 
 
 | Member | Discord | Email | Contribution |
 |--------|---------|-------|-------------|
-| Alvin Dellomas | @flewshy | alvindellomas0716@gmail.com | Full-stack, frontend, UI/UX |
+| Alvin Dellomas | @flewshy | alvindellomas0716@gmail.com | Full-stack, Frontend |
 | James Fontanilla | @jamesfontanilla | fontanilla.james.ramirez@gmail.com | Full-stack, backend |
-| John Ray Cacananta | @mkdirsol | johnray.cacananta@gmail.com | Full-stack, frontend, UI/UX |
+| John Ray Cacananta | @mkdirsol | johnray.cacananta@gmail.com | Full-stack, Frontend |
 
 ---
 
