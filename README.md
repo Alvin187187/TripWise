@@ -215,47 +215,6 @@ flowchart TD
 
 ## Architecture
 
-```mermaid
-graph TB
-    subgraph Client["Browser - React SPA"]
-        UI[React UI Shell]
-        LS[(localStorage)]
-        Live["live.ts - Data Engine"]
-        Ledger["ledger.ts - Trip Math"]
-        Chat["ChatPanel - Pawi"]
-        Offline[chatOffline.ts]
-    end
-
-    subgraph External["External APIs"]
-        OM["Open-Meteo Forecast + Marine"]
-        PAG["PAGASA Gale via Jina"]
-        DOE["DOE Diesel via Jina"]
-    end
-
-    subgraph Backend["Vercel Serverless"]
-        API["/api/chat - Python"]
-        GEM["Gemini 2.5 Flash"]
-    end
-
-    subgraph DB["Supabase"]
-        PG[(chat_logs)]
-    end
-
-    UI --> Live
-    UI --> Ledger
-    UI --> Chat
-    Live --> OM
-    Live --> PAG
-    Live --> DOE
-    Live --> LS
-    Ledger --> LS
-    Chat -->|Online| API
-    Chat -->|Offline| Offline
-    Offline --> LS
-    API --> GEM
-    Chat -->|Log| PG
-```
-
 The core **GO / CAUTION / STAY decision is deterministic** — computed by `scoreLive()` in `live.ts` using fixed thresholds and weighted inputs. The AI chatbot (Pawi) only **explains** the existing result; it never overrides or recomputes the verdict independently.
 
 ---
