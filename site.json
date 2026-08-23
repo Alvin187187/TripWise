@@ -4,6 +4,9 @@
   "robots": {
     "index": true
   },
+  "icons": {
+    "icon": "/favicon.ico"
+  },
   "accessibility": {
     "addBypassLinks": false,
     "ignoreReducedMotion": false

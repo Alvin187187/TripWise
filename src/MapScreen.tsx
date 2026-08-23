@@ -365,8 +365,20 @@ export default function MapScreen({
       setSpotsOpen(false);
     });
 
-    const ro = new ResizeObserver(() => map.resize());
+    const alignZoom = () => {
+      const shell = wrapRef.current?.closest(".omap");
+      const share = shell?.querySelector(".omap__share");
+      const ctrl = shell?.querySelector(".maplibregl-ctrl-top-right");
+      if (!shell || !share || !(ctrl instanceof HTMLElement)) return;
+      const top = share.getBoundingClientRect().top - shell.getBoundingClientRect().top;
+      ctrl.style.top = `${Math.round(top)}px`;
+    };
+    const ro = new ResizeObserver(() => {
+      map.resize();
+      alignZoom();
+    });
     ro.observe(wrapRef.current);
+    map.on("load", alignZoom);
 
     return () => {
       window.clearTimeout(bootTimer);
@@ -607,20 +619,15 @@ export default function MapScreen({
       </div>
 
       <header className="omap__chrome">
-        <button type="button" className="omap__back" onClick={onBack} aria-label="Back">
-          <Icon name="arrow-left" size={20} color="#0B2237" />
-        </button>
         <div className="omap__titlechip">
-          <div className="omap__kicker">OFFLINE MAP</div>
-          <div className="omap__title">Manila Bay</div>
-          <div className="omap__gps">{fmtCoord(HOME.lat, HOME.lng)}</div>
+          <div className="omap__titlechip-copy">
+            <div className="omap__kicker">OFFLINE MAP</div>
+            <div className="omap__title">Manila Bay</div>
+            <div className="omap__gps">{fmtCoord(HOME.lat, HOME.lng)}</div>
+          </div>
+          <img src={mascotMap} alt="TripWise location and safety mascot" className="omap__mascot mascot-cut" />
         </div>
-        <div className="omap__mascot" title="Location and Safety">
-          <img src={mascotMap} alt="TripWise location and safety mascot" />
-        </div>
-      </header>
-
-      <aside className="omap__share">
+        <aside className="omap__share">
         <div className="omap__share-row">
           <div>
             <div className="omap__share-label">Location Sharing</div>
@@ -636,11 +643,12 @@ export default function MapScreen({
             <span />
           </button>
         </div>
-        <button type="button" className="omap__qr-mini" onClick={() => setSheet("qr")}>
-          <Icon name="qrcode" size={16} color="#0E4C81" />
-          Share GPS via QR
-        </button>
-      </aside>
+          <button type="button" className="omap__qr-mini" onClick={() => setSheet("qr")}>
+            <Icon name="qrcode" size={16} color="#0E4C81" />
+            Share GPS via QR
+          </button>
+        </aside>
+      </header>
 
       {measuring && (
         <div className="omap-measure">
