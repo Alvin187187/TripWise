@@ -1,6 +1,10 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { logoOnNavy, mascotCatch, mascotFront, mascotHistory, mascotHome, mascotLanding, mascotOnboarding, mascotSettings, photos } from "./assets/media";
+import { logoOnNavy, mascotCatch, mascotFront, mascotHistory, mascotHome, mascotLanding, mascotOnboarding, mascotSettings, mascotWhatIf, photos } from "./assets/media";
+import HistoryScreen from "./HistoryScreen";
 import Icon, { type IconName } from "./icons";
+import MapScreen from "./MapScreen";
+import LedgerScreen from "./LedgerScreen";
+import { applyCatchToTrips, fmtP, seedTrips, summarizeJourney, type Budget, type SavedSpot, type TripRecord } from "./ledger";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Screen = "landing" | "login" | "onboarding" | "home" | "weather" | "math" | "whatif" | "map" | "catchlog" | "history" | "reference" | "settings";
@@ -15,6 +19,9 @@ interface FisherProfile {
   tripDuration: number;
   fishingGround: string;
   gear: string;
+  extraGrounds: string[];
+  extraHours: number[];
+  extraGear: string[];
 }
 
 // ─── Blue & White eye-friendly light theme ────────────────────────────────────
@@ -63,6 +70,55 @@ const FISHING_GROUNDS = [
   "Pamarawan Boundary",
 ];
 
+const BASE_HOURS = [3, 4, 5, 8];
+const BASE_GEAR = ["Gillnet / Lambat", "Kawil (Hook & Line)", "Palakol (Gill Net)", "Bintol (Trap)", "Trawl"];
+
+function emptyExtras() {
+  return { extraGrounds: [] as string[], extraHours: [] as number[], extraGear: [] as string[] };
+}
+
+function AddOther({
+  placeholder,
+  onAdd,
+}: {
+  placeholder: string;
+  onAdd: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [val, setVal] = useState("");
+
+  function save() {
+    const next = val.trim();
+    if (!next) return;
+    onAdd(next);
+    setVal("");
+    setOpen(false);
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className="setup-add" onClick={() => setOpen(true)}>
+        + Add other
+      </button>
+    );
+  }
+
+  return (
+    <div className="setup-addrow">
+      <input
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        placeholder={placeholder}
+        className="slot setup-input"
+        autoFocus
+        onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+      />
+      <button type="button" className="is-on" onClick={save}>Add</button>
+      <button type="button" onClick={() => { setOpen(false); setVal(""); }}>Cancel</button>
+    </div>
+  );
+}
+
 const BFAR_DATA = [
   { species: "Galunggong", local: "Round Scad",      pMin: 130, pMax: 145, vol: 42, note: "High demand, stable arrivals" },
   { species: "Tamban",     local: "Sardinella",      pMin: 95,  pMax: 110, vol: 28, note: "Moderate schooling near Tangos" },
@@ -71,13 +127,6 @@ const BFAR_DATA = [
   { species: "Tilapia",    local: "Tilapia",         pMin: 120, pMax: 140, vol: 22, note: "Stable pricing this week" },
   { species: "Sapsap",     local: "Ponyfish",        pMin: 85,  pMax: 100, vol: 18, note: "High volume at Navotas Fish Port" },
   { species: "Alumahan",   local: "Indian Mackerel", pMin: 150, pMax: 170, vol: 12, note: "Fewer landings reported" },
-];
-
-const TRIP_LOG = [
-  { date: "21 Aug", verdict: "GO"      as Verdict, catchKg: 11.0, revenue: 1507, fuel: 1120 },
-  { date: "19 Aug", verdict: "STAY"    as Verdict, catchKg: 0,    revenue: 0,    fuel: 0    },
-  { date: "18 Aug", verdict: "CAUTION" as Verdict, catchKg: 8.5,  revenue: 1165, fuel: 1120 },
-  { date: "15 Aug", verdict: "GO"      as Verdict, catchKg: 12.2, revenue: 1671, fuel: 1120 },
 ];
 
 const MAP_SPOTS = [
@@ -728,6 +777,13 @@ function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => vo
   const [ground, setGround] = useState("");
   const [groundOpen, setGroundOpen] = useState(false);
   const [gear, setGear] = useState("");
+  const [extraGrounds, setExtraGrounds] = useState<string[]>([]);
+  const [extraHours, setExtraHours] = useState<number[]>([]);
+  const [extraGear, setExtraGear] = useState<string[]>([]);
+
+  const allGrounds = [...FISHING_GROUNDS, ...extraGrounds.filter((g) => !FISHING_GROUNDS.includes(g))];
+  const allHours = [...BASE_HOURS, ...extraHours.filter((h) => !BASE_HOURS.includes(h))].sort((a, b) => a - b);
+  const allGear = [...BASE_GEAR, ...extraGear.filter((g) => !BASE_GEAR.includes(g))];
 
   const motorOptions: { id: MotorClass; label: string; sub: string }[] = [
     { id: "small",   label: "Small",   sub: "~2.5 L/h" },
@@ -743,147 +799,178 @@ function OnboardingScreen({ onComplete }: { onComplete: (p: FisherProfile) => vo
   }
 
   return (
-    <div style={{ minHeight: "100%", background: C.bg, display: "flex", flexDirection: "column" }}>
-      {/* Header */}
+    <div className="setup-page">
       <div className="app-bar">
-        <TripWiseLogo size={38}/>
+        <TripWiseLogo size={36}/>
         <div style={{ flex: 1 }}>
           <div className="app-bar__title">TRIPWISE</div>
           <div className="app-bar__sub">Worth the fuel. Safe home.</div>
         </div>
-        <MascotSlot size={52} alt="Setup mascot" src={mascotOnboarding} />
+        <img src={mascotOnboarding} alt="Setup mascot" className="setup-mascot mascot-cut" />
       </div>
 
-      {/* Safety banner */}
-      <div style={{ background: "#FEF2F2", borderBottom: `1px solid ${C.stayBorder}`, padding: "12px 20px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-        <IconSlot name="alert" size={18} color={C.stay} title="Safety warning" />
-        <div style={{ color: "#7F1D1D", fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>SAFETY RULE: If the sea is dangerous, STAY – always.</div>
+      <div className="setup-warn">
+        <IconSlot name="alert" size={16} color={C.stay} title="Safety warning" />
+        <span>If the sea is dangerous, STAY — always.</span>
       </div>
 
-        <div className="stack" style={{ flex: 1, padding: "20px 20px 32px", overflow: "auto" }}>
-
-        {/* Language */}
-        <div className="panel panel--screws" style={{ padding: 20 }}>
-          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Wika / Language</div>
-          <div style={{ display: "flex", gap: 10 }}>
-            {(["en","fil"] as Lang[]).map(l => (
-              <button key={l} onClick={() => setLang(l)} style={{ flex: 1, padding: "12px 0", borderRadius: 10, background: lang === l ? C.header : C.blueFaint, color: lang === l ? "white" : C.textSub, border: `1.5px solid ${lang === l ? C.header : C.border}`, fontFamily: "var(--font-body)", fontSize: 14, fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }}>
+      <div className="setup-stack">
+        <article className="tw-slide setup-card">
+          <label className="setup-label">Wika / Language</label>
+          <div className="setup-pair">
+            {(["en", "fil"] as Lang[]).map((l) => (
+              <button key={l} type="button" className={lang === l ? "is-on" : ""} onClick={() => setLang(l)}>
                 {l === "en" ? "English" : "Filipino"}
               </button>
             ))}
           </div>
-        </div>
+          <label className="setup-label">Fisher name <em>(optional)</em></label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Mang Nardo" className="slot setup-input" />
+        </article>
 
-        {/* Fisher name */}
-        <div className="panel panel--screws" style={{ padding: 20 }}>
-          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>
-            Fisher Name <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, fontSize: 11 }}>(optional)</span>
-          </div>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Mang Nardo"
-            style={{ width: "100%" }}
-            className="slot"
-            onFocus={e => e.currentTarget.style.borderColor = C.blue}
-            onBlur={e => e.currentTarget.style.borderColor = C.border}
-          />
-        </div>
-
-        {/* Motor class */}
-        <div className="panel panel--screws" style={{ padding: 20 }}>
-          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Boat Motor / Engine Class</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-            {motorOptions.map(opt => (
-              <button key={opt.id} onClick={() => setMotor(opt.id)} style={{ padding: "14px 8px", borderRadius: 12, background: motor === opt.id ? C.header : C.blueFaint, color: motor === opt.id ? "white" : C.textSub, border: `1.5px solid ${motor === opt.id ? C.header : C.border}`, cursor: "pointer", textAlign: "center", transition: "all 0.15s" }}>
-                <div style={{ fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 800, letterSpacing: "0.02em" }}>{opt.label}</div>
-                <div style={{ fontFamily: "var(--font-body)", fontSize: 10, marginTop: 3, opacity: 0.75 }}>{opt.sub}</div>
+        <article className="tw-slide setup-card">
+          <label className="setup-label">Boat motor</label>
+          <div className="setup-motors">
+            {motorOptions.map((opt) => (
+              <button key={opt.id} type="button" className={motor === opt.id ? "is-on" : ""} onClick={() => setMotor(opt.id)}>
+                <b>{opt.label}</b>
+                <small>{opt.sub}</small>
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Trip duration — manual input + suggestions */}
-        <div className="panel panel--screws" style={{ padding: 20 }}>
-          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Typical Trip Duration</div>
-          {/* Manual input */}
-          <div className="slot-wrap" style={{ marginBottom: 12 }}>
+          <label className="setup-label">Typical trip duration</label>
+          <div className="slot-wrap setup-hours">
             <input
-              type="number" inputMode="decimal" min={0.5} max={24} step={0.5}
+              type="number"
+              inputMode="decimal"
+              min={0.5}
+              max={24}
+              step={0.5}
               value={durationInput}
-              onChange={e => setDurationInput(e.target.value)}
-              placeholder="e.g. 5"
-              className="slot"
-              style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 800 }}
+              onChange={(e) => setDurationInput(e.target.value)}
+              placeholder="5"
+              className="slot setup-input"
             />
-            <div style={{ padding: "0 16px", color: C.textSub, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 600, borderLeft: `1px solid ${C.border}`, alignSelf: "stretch", display: "flex", alignItems: "center" }}>hours</div>
+            <span>hours</span>
           </div>
-          {/* Quick suggestions */}
-          <div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 11, marginBottom: 8 }}>Quick suggestions:</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {[3, 4, 5, 8].map(h => (
-              <button key={h} onClick={() => handleDurationSuggestion(h)}
-                style={{ flex: 1, padding: "9px 0", borderRadius: 8, background: parseFloat(durationInput) === h ? C.blueLight : "white", color: parseFloat(durationInput) === h ? C.blue : C.textSub, border: `1.5px solid ${parseFloat(durationInput) === h ? C.blue : C.border}`, fontFamily: "var(--font-display)", fontSize: 15, fontWeight: 700, cursor: "pointer", transition: "all 0.12s" }}>
+          <div className="setup-hours-picks">
+            {allHours.map((h) => (
+              <button key={h} type="button" className={parseFloat(durationInput) === h ? "is-on" : ""} onClick={() => handleDurationSuggestion(h)}>
                 {h}h
               </button>
             ))}
           </div>
-        </div>
+          <AddOther
+            placeholder="e.g. 6.5"
+            onAdd={(v) => {
+              const n = Number(v);
+              if (!n || n < 0.5 || n > 24) return;
+              const hours = Math.round(n * 2) / 2;
+              setExtraHours((list) => list.includes(hours) ? list : [...list, hours]);
+              setDurationInput(String(hours));
+            }}
+          />
+        </article>
 
-        {/* Fishing ground — manual text + dropdown suggestions */}
-        <div className="panel panel--screws" style={{ padding: 20, position: "relative" }}>
-          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Primary Fishing Ground</div>
-          <div style={{ position: "relative" }}>
+        <article className="tw-slide setup-card">
+          <label className="setup-label">Primary fishing ground</label>
+          <div className="setup-ground">
             <input
               value={ground}
-              onChange={e => { setGround(e.target.value); setGroundOpen(true); }}
+              onChange={(e) => { setGround(e.target.value); setGroundOpen(true); }}
               onFocus={() => setGroundOpen(true)}
-              placeholder="Type or pick from list below..."
-              className="slot"
-            style={{ fontFamily: "var(--font-body)" }}
+              placeholder="Type or pick..."
+              className="slot setup-input"
             />
-            <button onClick={() => setGroundOpen(v => !v)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", padding: 4 }}>
-              <IcChevD size={18} color={C.blue}/>
+            <button type="button" className="setup-chev" onClick={() => setGroundOpen((v) => !v)} aria-label="Ground list">
+              <IcChevD size={18} color={C.blue} />
             </button>
           </div>
           {groundOpen && (
-            <div style={{ marginTop: 6, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", boxShadow: "0 4px 16px rgba(14,76,129,0.12)" }}>
-              {FISHING_GROUNDS.filter(g => g.toLowerCase().includes(ground.toLowerCase()) || ground === "").map((g, i, arr) => (
-                <button key={g} onClick={() => { setGround(g); setGroundOpen(false); }} style={{ width: "100%", padding: "12px 14px", textAlign: "left", background: g === ground ? C.blueLight : "white", border: "none", borderBottom: i < arr.length - 1 ? `1px solid ${C.borderLight}` : "none", cursor: "pointer", color: C.text, fontFamily: "var(--font-body)", fontSize: 14, transition: "background 0.1s" }}>
+            <div className="setup-list">
+              {allGrounds.filter((g) => g.toLowerCase().includes(ground.toLowerCase()) || ground === "").map((g) => (
+                <button key={g} type="button" className={g === ground ? "is-on" : ""} onClick={() => { setGround(g); setGroundOpen(false); }}>
                   {g}
                 </button>
               ))}
             </div>
           )}
-        </div>
-
-        {/* Gear type */}
-        <div className="panel panel--screws" style={{ padding: 20 }}>
-          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Gear Type</div>
-          <input value={gear} onChange={e => setGear(e.target.value)} placeholder="e.g. Gillnet, Kawil, Palakol..."
-            className="slot"
-            onFocus={e => e.currentTarget.style.borderColor = C.blue}
-            onBlur={e => e.currentTarget.style.borderColor = gear ? C.blue : C.border}
+          <AddOther
+            placeholder="e.g. Malabon boundary"
+            onAdd={(v) => {
+              if (allGrounds.some((g) => g.toLowerCase() === v.toLowerCase())) {
+                setGround(v);
+                return;
+              }
+              setExtraGrounds((list) => [...list, v]);
+              setGround(v);
+              setGroundOpen(false);
+            }}
           />
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-            {["Gillnet / Lambat", "Kawil (Hook & Line)", "Palakol (Gill Net)", "Bintol (Trap)", "Trawl"].map(g => (
-              <button key={g} onClick={() => setGear(g)} style={{ padding: "6px 12px", borderRadius: 20, background: gear === g ? C.blueLight : C.blueFaint, color: gear === g ? C.blue : C.textSub, border: `1px solid ${gear === g ? C.blue : C.border}`, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
-                {g}
-              </button>
+          <label className="setup-label">Gear type</label>
+          <input value={gear} onChange={(e) => setGear(e.target.value)} placeholder="e.g. Gillnet, Kawil..." className="slot setup-input" />
+          <div className="setup-chips">
+            {allGear.map((g) => (
+              <button key={g} type="button" className={gear === g ? "is-on" : ""} onClick={() => setGear(g)}>{g}</button>
             ))}
           </div>
-        </div>
+          <AddOther
+            placeholder="e.g. Panakot, Bubo..."
+            onAdd={(v) => {
+              if (allGear.some((g) => g.toLowerCase() === v.toLowerCase())) {
+                setGear(v);
+                return;
+              }
+              setExtraGear((list) => [...list, v]);
+              setGear(v);
+            }}
+          />
+        </article>
 
-        {/* CTA */}
-        <div style={{ paddingTop: 4, display: "flex", flexDirection: "column", gap: 10 }}>
-          <button
-            onClick={() => onComplete({ name: name || "Kuya Jun", language: lang, motorClass: motor, tripDuration: durationVal || 5, fishingGround: ground || DEFAULT_GROUND, gear: gear || "Gillnet / Lambat" })}
-            disabled={!canContinue}
-            className="key-btn key-btn--primary key-btn--lg key-btn--block">
-            CONTINUE TO APP
-          </button>
-          <button onClick={() => onComplete({ name: "Demo Fisher", language: "en", motorClass: "typical", tripDuration: 5, fishingGround: DEFAULT_GROUND, gear: "Gillnet / Lambat" })}
-            style={{ width: "100%", padding: "13px 0", background: "transparent", border: "none", cursor: "pointer", color: C.textSub, fontFamily: "var(--font-body)", fontSize: 13 }}>
-            Skip for demo mode
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const hours = durationVal || 5;
+            const groundVal = ground.trim() || DEFAULT_GROUND;
+            const gearVal = gear.trim() || "Gillnet / Lambat";
+            onComplete({
+              name: name || "Kuya Jun",
+              language: lang,
+              motorClass: motor,
+              tripDuration: hours,
+              fishingGround: groundVal,
+              gear: gearVal,
+              extraGrounds: extraGrounds.includes(groundVal) || FISHING_GROUNDS.includes(groundVal)
+                ? extraGrounds
+                : [...extraGrounds, groundVal],
+              extraHours: extraHours.includes(hours) || BASE_HOURS.includes(hours)
+                ? extraHours
+                : [...extraHours, hours],
+              extraGear: extraGear.includes(gearVal) || BASE_GEAR.includes(gearVal)
+                ? extraGear
+                : [...extraGear, gearVal],
+            });
+          }}
+          disabled={!canContinue}
+          className="key-btn key-btn--primary key-btn--lg key-btn--block"
+        >
+          CONTINUE TO APP
+        </button>
+        <button
+          type="button"
+          className="setup-skip"
+          onClick={() => onComplete({
+            name: "Demo Fisher",
+            language: "en",
+            motorClass: "typical",
+            tripDuration: 5,
+            fishingGround: DEFAULT_GROUND,
+            gear: "Gillnet / Lambat",
+            ...emptyExtras(),
+          })}
+        >
+          Skip for demo mode
+        </button>
       </div>
     </div>
   );
@@ -1335,14 +1422,17 @@ function MathScreen({ profile, onBack }: { profile: FisherProfile; onBack: () =>
 }
 
 // ─── SCREEN: What-If Simulator ────────────────────────────────────────────────
-function WhatIfScreen({ profile, onBack }: { profile: FisherProfile; onBack: () => void }) {
+function WhatIfScreen({ profile, trips, onBack }: { profile: FisherProfile; trips: TripRecord[]; onBack: () => void }) {
   const lph = MOTOR_LPH[profile.motorClass];
-  const [fuelPrice, setFuelPrice] = useState(68);
-  const [catchKg, setCatchKg] = useState(11);
+  const book = summarizeJourney(trips);
+  const firstName = profile.name.split(" ")[0];
+  const [fuelPrice, setFuelPrice] = useState(DIESEL_PRICE);
+  const [catchKg, setCatchKg] = useState(Math.round(book.avgKgOut || 11));
   const [tripHrs, setTripHrs] = useState(profile.tripDuration);
   const [fishPrice, setFishPrice] = useState(TAMBAN_PRICE);
   const [waveHt, setWaveHt] = useState(0.8);
   const [preset, setPreset] = useState<string | null>(null);
+  const [showMath, setShowMath] = useState(false);
 
   const fuelCost = Math.round(lph * tripHrs * fuelPrice);
   const otherCost = 300;
@@ -1350,101 +1440,88 @@ function WhatIfScreen({ profile, onBack }: { profile: FisherProfile; onBack: () 
   const revenue = Math.round(catchKg * fishPrice);
   const netProfit = revenue - totalCost;
   const breakeven = Math.round((totalCost / fishPrice) * 10) / 10;
-  const safeScore = Math.round(Math.max(0, 100 - waveHt * 20));
-  const econScore = Math.round(Math.max(0, (netProfit / totalCost) * 100 + 50));
-  const safetyIndex = waveHt > 2.0 ? 0 : safeScore;
   const verdict: Verdict = waveHt > 2.0 ? "STAY" : netProfit > 500 ? "GO" : netProfit > 0 ? "CAUTION" : "STAY";
+  const profitTone = netProfit > 0 ? "go" : netProfit < 0 ? "stay" : "even";
+
+  const talk =
+    waveHt > 2
+      ? `Waves at ${waveHt.toFixed(1)}m beat any catch. I would stay, even at ${catchKg} kg.`
+      : netProfit > 500
+        ? `Waves are ${waveHt.toFixed(1)}m and this trip clears ${fmtP(netProfit)} after fuel and the ₱${otherCost} ice/food pad. I would go.`
+        : netProfit > 0
+          ? `You beat break-even (${breakeven} kg), but only ${fmtP(netProfit)} is left. Thin water. Caution.`
+          : `This trip would lose ${fmtP(netProfit)}. Stay for the money.`;
 
   const presets = [
-    { label: "Diesel +₱5", action: () => { setFuelPrice(73); setPreset("Diesel +₱5"); } },
+    { label: "Diesel +₱5", action: () => { setFuelPrice(DIESEL_PRICE + 5); setPreset("Diesel +₱5"); } },
     { label: "Bad Day (4kg)", action: () => { setCatchKg(4); setPreset("Bad Day (4kg)"); } },
     { label: "Rough Sea (2.1m)", action: () => { setWaveHt(2.1); setPreset("Rough Sea (2.1m)"); } },
   ];
 
-  const vc = { GO: { color: C.go, bg: C.goBg, border: C.goBorder }, CAUTION: { color: C.caution, bg: C.cautionBg, border: C.cautionBorder }, STAY: { color: C.stay, bg: C.stayBg, border: C.stayBorder } }[verdict];
-
   return (
-    <div style={{ minHeight: "100%", background: C.bg, paddingBottom: 80 }}>
+    <div className="whatif-page">
       <div className="app-bar">
-        <button onClick={onBack} className="icon-key" aria-label="Back"><IcBack size={20} color="white"/></button>
+        <button type="button" onClick={onBack} className="icon-key" aria-label="Back"><IcBack size={20} color="white"/></button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="app-bar__title">WHAT IF: TRIP SIMULATOR</div>
+          <div className="app-bar__title">WHAT IF</div>
+          <div className="app-bar__sub">Knobs and result stay on one screen.</div>
         </div>
         <VerdictBadge verdict={verdict}/>
       </div>
 
-      <div className="screen-pad">
-        {/* Presets */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 600, alignSelf: "center" }}>PRESETS:</div>
-          {presets.map(p => (
-            <button key={p.label} onClick={p.action} style={{ padding: "7px 12px", borderRadius: 20, background: preset === p.label ? C.header : C.card, color: preset === p.label ? "white" : C.textSub, border: `1px solid ${preset === p.label ? C.header : C.border}`, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
-              {p.label}
-            </button>
-          ))}
-        </div>
+      <div className="whatif-desk">
+        <article className={`tw-slide whatif-live whatif-live--${verdict.toLowerCase()}`}>
+          <img src={mascotWhatIf} alt="What-If mascot" className="mascot-cut" />
+          <div className="whatif-live__text">
+            <p><span>{firstName}</span>, {talk}</p>
+            <div className={`whatif-live__num ledger-profit--${profitTone}`}>{fmtP(netProfit)}</div>
+          </div>
+          <div className="whatif-live__ticks">
+            <span>Break-even <b>{breakeven} kg</b></span>
+            <span>Fuel <b>{fmtP(fuelCost)}</b></span>
+            <span>Vs book <b className={netProfit - book.avgProfit >= 0 ? "is-go" : "is-stay"}>{fmtP(netProfit - book.avgProfit)}</b></span>
+          </div>
+        </article>
 
-        {/* Result card */}
-        <Card style={{ padding: "14px 16px", marginBottom: 12, border: `1.5px solid ${vc.border}`, background: vc.bg }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: 12 }}>
-            {[
-              { l: "TOTAL DIESEL", v: `₱${fuelCost.toLocaleString()}` },
-              { l: "OTHER COSTS", v: `₱${otherCost}` },
-              { l: "TOTAL SIM COST", v: `₱${totalCost.toLocaleString()}` },
-            ].map(c => <div key={c.l} style={{ textAlign: "center" }}><div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em" }}>{c.l}</div><div style={{ color: C.text, fontFamily: "var(--font-display)", fontSize: 14, fontWeight: 800, marginTop: 2 }}>{c.v}</div></div>)}
-          </div>
-          <div style={{ height: 1, background: vc.border, marginBottom: 12 }}/>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: 14 }}>
-            {[
-              { l: "BREAK-EVEN", v: `${breakeven} kg` },
-              { l: "EST. REVENUE", v: `₱${revenue.toLocaleString()}` },
-              { l: "NET PROFIT", v: `${netProfit >= 0 ? "+" : ""}₱${netProfit.toLocaleString()}`, color: netProfit >= 0 ? C.go : C.stay },
-            ].map(c => <div key={c.l} style={{ textAlign: "center" }}><div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em" }}>{c.l}</div><div style={{ color: (c as any).color || C.text, fontFamily: "var(--font-display)", fontSize: 14, fontWeight: 800, marginTop: 2 }}>{c.v}</div></div>)}
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {[{ l: "Safety Score", v: safeScore }, { l: "Economic", v: econScore }, { l: "Safety Index", v: safetyIndex }].map(s => (
-              <div key={s.l} style={{ flex: 1, textAlign: "center", background: "white", borderRadius: 8, padding: "8px 4px", border: `1px solid ${C.border}` }}>
-                <div style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 900, color: s.v >= 70 ? C.go : s.v >= 40 ? C.caution : C.stay }}>{s.v}</div>
-                <div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 9 }}>{s.l}</div>
-              </div>
+        <article className="tw-slide whatif-board">
+          <div className="whatif-presets">
+            {presets.map((p) => (
+              <button key={p.label} type="button" className={preset === p.label ? "is-on" : ""} onClick={p.action}>{p.label}</button>
             ))}
           </div>
-        </Card>
-
-        {/* Safety override warning */}
-        {waveHt > 2.0 && (
-          <div style={{ background: C.stayBg, border: `1.5px solid ${C.stayBorder}`, borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
-            <div style={{ color: C.stay, fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 700 }}>Safety Overrides Economics</div>
-            <div style={{ color: "#7F1D1D", fontFamily: "var(--font-body)", fontSize: 11, lineHeight: 1.5, marginTop: 3 }}>If Wave Height exceeds 2.0m, final simulated verdict automatically changes to STAY, even if expected catch is 20kg.</div>
-          </div>
-        )}
-
-        {/* Sliders */}
-        <Card screws style={{ padding: 20 }}>
-          <SectionTitle>Adjust Simulation Parameters</SectionTitle>
           {[
-            { label: "Fuel Price per Liter", val: fuelPrice, min: 50, max: 100, step: 0.5, display: `₱${fuelPrice.toFixed(0)}`, set: setFuelPrice },
-            { label: "Expected Catch Volume", val: catchKg, min: 2, max: 20, step: 1, display: `${catchKg} kg`, set: setCatchKg },
-            { label: "Trip Duration", val: tripHrs, min: 2, max: 8, step: 1, display: `${tripHrs} hours`, set: setTripHrs },
-            { label: "Tamban Blend Market Price", val: fishPrice, min: 100, max: 250, step: 5, display: `₱${fishPrice}/kg`, set: setFishPrice },
-            { label: "Forecast Wave Height", val: waveHt, min: 0.2, max: 3.2, step: 0.1, display: `${waveHt.toFixed(1)}m`, set: setWaveHt },
-          ].map(s => (
-            <div key={s.label} style={{ marginBottom: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 12 }}>{s.label}</div>
-                <div style={{ color: C.blue, fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 800 }}>{s.display}</div>
-              </div>
-              <input type="range" min={s.min} max={s.max} step={s.step} value={s.val} onChange={e => { s.set(+e.target.value); setPreset(null); }}/>
-              <div style={{ display: "flex", justifyContent: "space-between", color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 10, marginTop: 2 }}>
-                <span>{s.min}</span><span>{s.max}</span>
-              </div>
-            </div>
+            { label: "Diesel / L", val: fuelPrice, min: 50, max: 100, step: 0.5, display: `₱${fuelPrice.toFixed(0)}`, set: setFuelPrice },
+            { label: "Catch", val: catchKg, min: 2, max: 20, step: 1, display: `${catchKg} kg`, set: setCatchKg },
+            { label: "Hours", val: tripHrs, min: 2, max: 8, step: 1, display: `${tripHrs} h`, set: setTripHrs },
+            { label: "₱ / kg", val: fishPrice, min: 100, max: 250, step: 5, display: `₱${fishPrice}`, set: setFishPrice },
+            { label: "Waves", val: waveHt, min: 0.2, max: 3.2, step: 0.1, display: `${waveHt.toFixed(1)} m`, set: setWaveHt },
+          ].map((s) => (
+            <label key={s.label} className="whatif-slim">
+              <span>{s.label}</span>
+              <input type="range" min={s.min} max={s.max} step={s.step} value={s.val} onChange={(e) => { s.set(+e.target.value); setPreset(null); }} />
+              <b>{s.display}</b>
+            </label>
           ))}
-        </Card>
+          {waveHt > 2.0 && <div className="whatif-warn">Waves over 2.0m force STAY, even at 20 kg.</div>}
+        </article>
 
-        <button onClick={onBack} style={{ width: "100%", padding: "14px", borderRadius: 10, background: C.blueFaint, border: `1px solid ${C.border}`, color: C.blue, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-          Show Simulation Math
+        <button type="button" className="tw-slide history-ref" onClick={() => setShowMath((v) => !v)}>
+          {showMath ? "Hide the math" : "Show the math"}
         </button>
+        {showMath && (
+          <article className="tw-slide whatif-math">
+            <div className="ledger-kv">
+              <span>Fuel</span>
+              <b>{lph} L/h × {tripHrs} h × ₱{fuelPrice} = {fmtP(fuelCost)}</b>
+              <span>Ice / food pad</span>
+              <b>{fmtP(otherCost)} · fixed in this sim</b>
+              <span>Revenue</span>
+              <b>{catchKg} kg × ₱{fishPrice} = {fmtP(revenue)}</b>
+              <span>Profit</span>
+              <b className={netProfit >= 0 ? "is-go" : "is-stay"}>{fmtP(revenue)} − {fmtP(totalCost)} = {fmtP(netProfit)}</b>
+            </div>
+          </article>
+        )}
       </div>
     </div>
   );
@@ -1507,136 +1584,6 @@ function HoldSosButton({ onActivate }: { onActivate: () => void }) {
         </span>
       )}
     </button>
-  );
-}
-
-// ─── SCREEN: Map ──────────────────────────────────────────────────────────────
-function MapScreen({ profile, onBack }: { profile: FisherProfile; onBack: () => void }) {
-  const [sharing, setSharing] = useState(true);
-  const [activeFilter, setActiveFilter] = useState("Spots");
-  const [sos, setSos] = useState(false);
-
-  return (
-    <div style={{ minHeight: "100%", background: C.bg, paddingBottom: 80 }}>
-      <div className="app-bar">
-        <button onClick={onBack} className="icon-key" aria-label="Back"><IcBack size={20} color="white"/></button>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="app-bar__title">OFFLINE MAP · MANILA BAY</div>
-          <div className="app-bar__sub">246° WSW  ·  5.4 Knots  ·  14.639°N, 120.933°E</div>
-        </div>
-        {!sos ? (
-          <button
-            className="key-btn key-btn--danger key-btn--sm"
-            onPointerDown={() => { const t = setTimeout(() => setSos(true), 1800); const up = () => { clearTimeout(t); document.removeEventListener("pointerup", up); }; document.addEventListener("pointerup", up); }}
-          >
-            <IconSlot name="lifebuoy" size={16} color="#fff" title="SOS" />
-            SOS
-          </button>
-        ) : (
-          <KeyBtn variant="danger" size="sm" onClick={() => setSos(false)}>CALLING... CANCEL</KeyBtn>
-        )}
-      </div>
-
-      <div className="screen-pad">
-        {/* Map */}
-        <div className="panel" style={{ height: 260, borderRadius: 20, overflow: "hidden", position: "relative", boxShadow: "var(--shadow-hard)" }}>
-          <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }} viewBox="0 0 400 260" preserveAspectRatio="xMidYMid slice">
-            <rect width="400" height="260" fill="#c8dff0"/>
-            <path d="M0,0 L230,0 L235,30 L228,60 L222,90 L215,120 L208,150 L202,180 L196,210 L190,240 L185,260 L0,260 Z" fill="#e8f0e4"/>
-            <path d="M240,0 L290,0 L285,30 L278,60 L270,90 L263,120 L256,150 L249,180 L242,210 L236,240 L232,260 L224,260 L228,240 L232,210 L237,180 L242,150 L248,120 L254,90 L260,60 L265,30 L268,0 Z" fill="#e8f0e4"/>
-            {[[20,20,18,14],[48,20,22,14],[80,20,20,14],[20,42,26,14],[52,42,18,14],[80,42,22,14],[110,20,20,14],[140,20,18,14],[110,42,22,14],[20,80,20,18],[46,80,18,18],[20,130,22,18],[48,130,18,18],[20,180,20,18]].map(([x,y,w,h],i)=>(
-              <rect key={i} x={x} y={y} width={w} height={h} rx="2" fill="#d8e8c8" stroke="#c5d8b5" strokeWidth="0.5"/>
-            ))}
-            <line x1="0" y1="90" x2="210" y2="90" stroke="white" strokeWidth="5"/><line x1="0" y1="90" x2="210" y2="90" stroke="#f8c84a" strokeWidth="1.5" strokeDasharray="8,8"/>
-            <line x1="0" y1="155" x2="215" y2="155" stroke="white" strokeWidth="5"/><line x1="0" y1="155" x2="215" y2="155" stroke="#f8c84a" strokeWidth="1.5" strokeDasharray="8,8"/>
-            <line x1="110" y1="0" x2="110" y2="200" stroke="white" strokeWidth="5"/><line x1="110" y1="0" x2="110" y2="200" stroke="#f8c84a" strokeWidth="1.5" strokeDasharray="8,8"/>
-            {[[0,55,200,55],[0,115,210,115],[0,175,208,175],[35,0,35,210],[75,0,75,210],[148,0,148,210]].map(([x1,y1,x2,y2],i)=>(
-              <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="white" strokeWidth="2.5" opacity="0.8"/>
-            ))}
-            <text x="320" y="130" fill="#7aaec8" fontSize="13" fontWeight="600" fontFamily="sans-serif" textAnchor="middle" transform="rotate(-10,320,130)" opacity="0.9">Manila Bay</text>
-            <polyline points="170,230 155,185 135,155 115,120 95,90 70,55 55,35" fill="none" stroke={C.stay} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6,4" opacity="0.85"/>
-            {/* Spots */}
-            <g transform="translate(90,78)" style={{ cursor: "pointer" }}>
-              <path d="M10,0 C4.5,0 0,4.5 0,10 C0,16.5 10,23 10,23 C10,23 20,16.5 20,10 C20,4.5 15.5,0 10,0 Z" fill={C.go}/>
-              <circle cx="10" cy="10" r="4" fill="white" opacity="0.9"/>
-              <text x="22" y="-3" fill={C.text} fontSize="9" fontFamily="sans-serif" fontWeight="700">Tangos</text>
-              <text x="22" y="8" fill={C.go} fontSize="8" fontFamily="sans-serif">13 kg</text>
-            </g>
-            <g transform="translate(30,95)" style={{ cursor: "pointer" }}>
-              <path d="M8,0 C3.6,0 0,3.6 0,8 C0,13 8,18 8,18 C8,18 16,13 16,8 C16,3.6 12.4,0 8,0 Z" fill={C.caution}/>
-              <circle cx="8" cy="8" r="3.2" fill="white" opacity="0.9"/>
-              <text x="18" y="4" fill={C.text} fontSize="9" fontFamily="sans-serif" fontWeight="700">Pamarawan</text>
-            </g>
-            {/* Home position */}
-            <g transform="translate(170,230)" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))">
-              <circle cx="0" cy="0" r="12" fill={C.header}/>
-              <circle cx="0" cy="0" r="8" fill="white"/>
-              <foreignObject x="-8" y="-8" width="16" height="16">
-                <div style={{ width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Icon name="sail-boat" size={12} color={C.header} title="Boat position" />
-                </div>
-              </foreignObject>
-              <circle cx="0" cy="0" r="20" fill="none" stroke={C.header} strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6"/>
-            </g>
-            {/* Scale */}
-            <g transform="translate(10,240)"><rect x="0" y="0" width="52" height="10" rx="2" fill="white" opacity="0.88"/><line x1="2" y1="5" x2="50" y2="5" stroke="#555" strokeWidth="1.5"/><line x1="2" y1="3" x2="2" y2="8" stroke="#555" strokeWidth="1.5"/><line x1="50" y1="3" x2="50" y2="8" stroke="#555" strokeWidth="1.5"/><text x="26" y="5" fontSize="6" textAnchor="middle" fill="#555" fontFamily="sans-serif" dominantBaseline="middle">Scale 1 km</text></g>
-            {/* Compass */}
-            <g transform="translate(375,20)"><circle cx="0" cy="0" r="12" fill="white" opacity="0.9"/><text x="0" y="-2" fontSize="7" textAnchor="middle" fill="#DC2626" fontFamily="sans-serif" fontWeight="700">N</text><polygon points="0,-9 2.5,-2 0,0 -2.5,-2" fill="#DC2626"/><polygon points="0,9 2.5,2 0,0 -2.5,2" fill="#aaa"/></g>
-          </svg>
-        </div>
-
-        {/* Filter bar */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-          {["Spots", "Routes", "Wind", "Rain", "Warnings"].map(f => (
-            <button key={f} onClick={() => setActiveFilter(f)} style={{ padding: "6px 12px", borderRadius: 20, background: activeFilter === f ? C.header : C.card, color: activeFilter === f ? "white" : C.textSub, border: `1px solid ${activeFilter === f ? C.header : C.border}`, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
-              {f}
-            </button>
-          ))}
-        </div>
-
-        {/* Sharing */}
-        <Card style={{ padding: "12px 14px", marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <div style={{ width: 32, height: 32, borderRadius: 8, background: sharing ? C.blueLight : C.blueFaint, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <IcShare size={16} color={sharing ? C.blue : C.textFaint}/>
-              </div>
-              <div>
-                <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 600 }}>Rosa (Asawa) can see me</div>
-                <div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 11 }}>Auto-sends periodic low-bandwidth SMS coordinates</div>
-              </div>
-            </div>
-            <Toggle on={sharing} onChange={setSharing}/>
-          </div>
-        </Card>
-
-        <div style={{ display: "flex", gap: 10 }}>
-          <KeyBtn variant="primary" onClick={() => {}} style={{ flex: 1 }}>START DEPARTURE LOG</KeyBtn>
-          <HoldSosButton onActivate={() => setSos(true)}/>
-        </div>
-
-        <SectionTitle>Familiar Fishing Spots</SectionTitle>
-        {MAP_SPOTS.map((spot, i) => (
-          <SceneCard
-            key={i}
-            compact
-            badge={<VerdictBadge verdict={spot.verdict}/>}
-            visual={
-              <div className="thumb-visual thumb-visual--spot">
-                <PhotoWell src={[photos.mapTangos, photos.mapCoast, photos.mapBinuangan][i]} alt={spot.name} wash="sea">
-                  <span className="icon-slot icon-slot--lg icon-slot--round" style={{ width: 40, height: 40, background: "rgba(255,255,255,0.28)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <Icon name="map-marker" size={22} color="#fff" title={spot.name} />
-                  </span>
-                </PhotoWell>
-              </div>
-            }
-          >
-            <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 15, fontWeight: 700 }}>{spot.name}</div>
-            <div className="num" style={{ color: C.textFaint, fontSize: 12 }}>{spot.dist}  ·  Last: {spot.lastKg} kg ({spot.species})</div>
-          </SceneCard>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -1744,123 +1691,6 @@ function CatchLogScreen({ profile, onBack, onSave }: { profile: FisherProfile; o
   );
 }
 
-// ─── SCREEN: History ──────────────────────────────────────────────────────────
-function HistoryScreen({ onBack, onReference }: { onBack: () => void; onReference: () => void }) {
-  const totalFuelSaved = 2340;
-  const incomeProtected = 8100;
-  const bestGround = "Tangos";
-  const maxRev = Math.max(...TRIP_LOG.map(t => t.revenue));
-
-  return (
-    <div style={{ minHeight: "100%", background: C.bg, paddingBottom: 80 }}>
-      <div className="app-bar">
-        <button onClick={onBack} className="icon-key" aria-label="Back"><IcBack size={20} color="white"/></button>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="app-bar__title">TRIP HISTORY &amp; SCORES</div>
-        </div>
-        <span className="verdict" style={{ background: C.go, color: "white", border: "none" }}>SDG 14</span>
-        <span className="verdict" style={{ background: C.caution, color: "white", border: "none" }}>SDG 1</span>
-      </div>
-
-      <div className="screen-pad">
-        {/* Impact dashboard */}
-        <Card screws style={{ padding: 20 }}>
-          <SectionTitle>Your Estimated Impact Dashboard</SectionTitle>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
-            {[
-              { label: "TOTAL FUEL SAVED", value: `₱${(totalFuelSaved/1000).toFixed(1)}k`, sub: "5 Safe Stays", color: C.go },
-              { label: "INCOME PROTECTED", value: `₱${(incomeProtected/1000).toFixed(1)}k`, sub: "Avoided Losses", color: C.blue },
-              { label: "BEST GROUND (MO)", value: bestGround, sub: "12.4 kg Avg", color: C.caution },
-            ].map(m => (
-              <div key={m.label} style={{ textAlign: "center" }}>
-                <div style={{ color: m.color, fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 900 }}>{m.value}</div>
-                <div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 2 }}>{m.label}</div>
-                <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 10, marginTop: 1 }}>{m.sub}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ background: C.goBg, border: `1px solid ${C.goBorder}`, borderRadius: 8, padding: "8px 12px", textAlign: "center" }}>
-            <span style={{ color: C.goText, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <IconSlot name="fire" size={16} color={C.go} title="Stay streak" />
-              Stay Streak: 2 Days. Saved ₱780 in fuel costs this week!
-            </span>
-          </div>
-        </Card>
-
-        {/* Performance scores */}
-        <Card screws style={{ padding: 20 }}>
-          <SectionTitle>Historical Performance Scores</SectionTitle>
-          {[
-            { label: "Fishing Spot Utility Score", sub: "Based on yield predictions vs actual catch", score: 82, color: C.go },
-            { label: "Economic Margin Ratio", sub: "Expected revenue divided by trip cost", score: 76, color: C.blue },
-            { label: "Safety Threshold Score", sub: "Wind and wave heights safely observed", score: 94, color: "#16A34A" },
-          ].map((s, i) => (
-            <div key={s.label} style={{ marginBottom: i < 2 ? 14 : 0 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 600 }}>{s.label}</div>
-                  <div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 11 }}>{s.sub}</div>
-                </div>
-                <div style={{ color: s.color, fontFamily: "var(--font-display)", fontSize: 24, fontWeight: 900, marginLeft: 12 }}>{s.score}</div>
-              </div>
-              <div className="chart-track" style={{ height: 6, borderRadius: 3, background: C.blueLight }}>
-                <div className="chart-fill" style={{ width: `${s.score}%`, background: s.color, animationDelay: `${i * 90}ms` }}/>
-              </div>
-            </div>
-          ))}
-        </Card>
-
-        {/* Month vs last month */}
-        <Card screws style={{ padding: 20 }}>
-          <SectionTitle>This Month vs Last Month</SectionTitle>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
-            {[
-              { label: "Catch", value: "+18%", color: C.go },
-              { label: "Net Income", value: "+12%", color: C.go },
-              { label: "Fuel Cost", value: "+6%", color: C.caution },
-              { label: "Est Profit", value: "+15%", color: C.go },
-            ].map(m => (
-              <div key={m.label} style={{ textAlign: "center", background: C.blueFaint, borderRadius: 8, padding: "10px 4px" }}>
-                <div style={{ color: m.color, fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 900 }}>▲ {m.value}</div>
-                <div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 10, marginTop: 2 }}>{m.label}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        {/* Trip log table */}
-        <Card style={{ padding: 0, marginBottom: 12, overflow: "hidden" }}>
-          <div style={{ padding: "12px 16px 10px", borderBottom: `1px solid ${C.borderLight}` }}>
-            <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em" }}>Recent Trip Logs</div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "48px 58px 60px 70px 70px 60px", padding: "8px 14px", borderBottom: `1px solid ${C.borderLight}` }}>
-            {["Date", "Verdict", "Catch", "Net Income", "Fuel Cost", "Profit"].map(h => (
-              <div key={h} style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", textAlign: h !== "Date" && h !== "Verdict" ? "right" : "left" }}>{h}</div>
-            ))}
-          </div>
-          {TRIP_LOG.map((trip, i) => {
-            const profit = trip.revenue - trip.fuel;
-            const vc = { GO: C.go, CAUTION: C.caution, STAY: C.stay }[trip.verdict];
-            return (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "48px 58px 60px 70px 70px 60px", padding: "10px 14px", borderBottom: i < TRIP_LOG.length - 1 ? `1px solid ${C.borderLight}` : "none", alignItems: "center" }}>
-                <div style={{ color: C.textSub, fontFamily: "var(--font-body)", fontSize: 12 }}>{trip.date}</div>
-                <VerdictBadge verdict={trip.verdict} size="sm"/>
-                <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 600, textAlign: "right" }}>{trip.catchKg > 0 ? `${trip.catchKg} kg` : "0 kg (Waves)"}</div>
-                <div style={{ color: trip.revenue > 0 ? C.go : C.textFaint, fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 600, textAlign: "right" }}>{trip.revenue > 0 ? `₱${trip.revenue.toLocaleString()}` : `₱${trip.fuel > 0 ? trip.fuel.toLocaleString() : "—"} Saved`}</div>
-                <div style={{ color: trip.fuel > 0 ? C.textSub : C.textFaint, fontFamily: "var(--font-body)", fontSize: 12, textAlign: "right" }}>₱{trip.fuel.toLocaleString()}</div>
-                <div style={{ color: profit > 0 ? C.go : profit < 0 ? C.stay : C.textFaint, fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 700, textAlign: "right" }}>{profit > 0 ? `+₱${profit.toLocaleString()}` : trip.fuel > 0 ? `₱${Math.abs(profit).toLocaleString()}` : "—"}</div>
-              </div>
-            );
-          })}
-          <button onClick={onReference} style={{ width: "100%", padding: "12px 16px", textAlign: "left", background: C.blueFaint, border: "none", cursor: "pointer", color: C.blue, fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 600, borderTop: `1px solid ${C.border}` }}>
-            View Official Navotas Port Landings Report →
-          </button>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
 // ─── SCREEN: Reference ────────────────────────────────────────────────────────
 function ReferenceScreen({ onBack }: { onBack: () => void }) {
   return (
@@ -1914,13 +1744,29 @@ function ReferenceScreen({ onBack }: { onBack: () => void }) {
 }
 
 // ─── SCREEN: Settings ─────────────────────────────────────────────────────────
-function SettingsScreen({ profile, onBack, onReset }: { profile: FisherProfile; onBack: () => void; onReset: () => void }) {
+function SettingsScreen({ profile, onBack, onReset, onProfile }: { profile: FisherProfile; onBack: () => void; onReset: () => void; onProfile: (p: FisherProfile) => void }) {
   const [lang, setLang] = useState<Lang>(profile.language);
   const [contact, setContact] = useState("+63 917 123 4567");
   const [editContact, setEditContact] = useState(false);
 
   const lph = MOTOR_LPH[profile.motorClass];
   const motorLabel = { small: "Small", typical: "Typical", heavier: "Heavier" }[profile.motorClass];
+  const extras = { extraGrounds: profile.extraGrounds ?? [], extraHours: profile.extraHours ?? [], extraGear: profile.extraGear ?? [] };
+  const allGrounds = [
+    ...FISHING_GROUNDS,
+    ...extras.extraGrounds.filter((g) => !FISHING_GROUNDS.includes(g)),
+    ...(FISHING_GROUNDS.includes(profile.fishingGround) || extras.extraGrounds.includes(profile.fishingGround) ? [] : [profile.fishingGround]),
+  ];
+  const allHours = [
+    ...BASE_HOURS,
+    ...extras.extraHours.filter((h) => !BASE_HOURS.includes(h)),
+    ...(BASE_HOURS.includes(profile.tripDuration) || extras.extraHours.includes(profile.tripDuration) ? [] : [profile.tripDuration]),
+  ].sort((a, b) => a - b);
+  const allGear = [
+    ...BASE_GEAR,
+    ...extras.extraGear.filter((g) => !BASE_GEAR.includes(g)),
+    ...(BASE_GEAR.includes(profile.gear) || extras.extraGear.includes(profile.gear) ? [] : [profile.gear]),
+  ];
 
   return (
     <div style={{ minHeight: "100%", background: C.bg, paddingBottom: 80 }}>
@@ -1945,26 +1791,72 @@ function SettingsScreen({ profile, onBack, onReset }: { profile: FisherProfile; 
           </div>
         </Card>
 
-        {/* Profile locked */}
-        <Card screws style={{ padding: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <Icon name="lock" size={14} color={C.blue} title="Locked" />
-            <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 700 }}>Fisher Setup Profile (Locked)</div>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {[
-              { label: "Engine Capacity Class", value: `${motorLabel} (${lph} L/h) consumption profile` },
-              { label: "Default Trip Expected Duration", value: `${profile.tripDuration} Hours profile duration` },
-              { label: "Primary Fishing Ground Bounds", value: `${profile.fishingGround} (Navotas Coast)` },
-              { label: "Default Gear in Use", value: profile.gear },
-            ].map(row => (
-              <div key={row.label}>
-                <div style={{ color: C.textFaint, fontFamily: "var(--font-body)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{row.label}</div>
-                <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, marginTop: 1 }}>{row.value}</div>
-              </div>
+        <article className="tw-slide setup-card">
+          <div className="setup-label">Engine class</div>
+          <div style={{ color: C.text, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{motorLabel} ({lph} L/h)</div>
+          <label className="setup-label">Typical trip duration</label>
+          <div className="setup-hours-picks">
+            {allHours.map((h) => (
+              <button key={h} type="button" className={profile.tripDuration === h ? "is-on" : ""} onClick={() => onProfile({ ...profile, ...extras, tripDuration: h })}>
+                {h}h
+              </button>
             ))}
           </div>
-        </Card>
+          <AddOther
+            placeholder="e.g. 6.5"
+            onAdd={(v) => {
+              const n = Number(v);
+              if (!n || n < 0.5 || n > 24) return;
+              const hours = Math.round(n * 2) / 2;
+              onProfile({
+                ...profile,
+                ...extras,
+                tripDuration: hours,
+                extraHours: extras.extraHours.includes(hours) ? extras.extraHours : [...extras.extraHours, hours],
+              });
+            }}
+          />
+          <label className="setup-label">Primary fishing ground</label>
+          <div className="setup-chips">
+            {allGrounds.map((g) => (
+              <button key={g} type="button" className={profile.fishingGround === g ? "is-on" : ""} onClick={() => onProfile({ ...profile, ...extras, fishingGround: g })}>
+                {g}
+              </button>
+            ))}
+          </div>
+          <AddOther
+            placeholder="e.g. Malabon boundary"
+            onAdd={(v) => {
+              const exists = allGrounds.some((g) => g.toLowerCase() === v.toLowerCase());
+              onProfile({
+                ...profile,
+                ...extras,
+                fishingGround: v,
+                extraGrounds: exists ? extras.extraGrounds : [...extras.extraGrounds, v],
+              });
+            }}
+          />
+          <label className="setup-label">Gear type</label>
+          <div className="setup-chips">
+            {allGear.map((g) => (
+              <button key={g} type="button" className={profile.gear === g ? "is-on" : ""} onClick={() => onProfile({ ...profile, ...extras, gear: g })}>
+                {g}
+              </button>
+            ))}
+          </div>
+          <AddOther
+            placeholder="e.g. Panakot, Bubo..."
+            onAdd={(v) => {
+              const exists = allGear.some((g) => g.toLowerCase() === v.toLowerCase());
+              onProfile({
+                ...profile,
+                ...extras,
+                gear: v,
+                extraGear: exists ? extras.extraGear : [...extras.extraGear, v],
+              });
+            }}
+          />
+        </article>
 
         {/* Family contact */}
         <Card screws style={{ padding: 20 }}>
@@ -2036,6 +1928,9 @@ function SettingsScreen({ profile, onBack, onReset }: { profile: FisherProfile; 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("landing");
   const [profile, setProfile] = useState<FisherProfile | null>(null);
+  const [trips, setTrips] = useState<TripRecord[]>(() => seedTrips());
+  const [savedSpots, setSavedSpots] = useState<SavedSpot[]>([]);
+  const [budget, setBudget] = useState<Budget>({ period: "weekly", amount: 5000 });
   const scrollRef = useRef<HTMLDivElement>(null);
   const nav = useCallback((s: Screen) => setScreen(s), []);
 
@@ -2057,12 +1952,36 @@ export default function App() {
             {screen === "home"      && <HomeScreen profile={profile} onNav={nav}/>}
             {screen === "weather"   && <WeatherScreen onBack={() => nav("home")}/>}
             {screen === "math"      && <MathScreen profile={profile} onBack={() => nav("home")}/>}
-            {screen === "whatif"    && <WhatIfScreen profile={profile} onBack={() => nav("home")}/>}
-            {screen === "map"       && <MapScreen profile={profile} onBack={() => nav("home")}/>}
-            {screen === "catchlog"  && <CatchLogScreen profile={profile} onBack={() => nav("home")} onSave={() => nav("home")}/>}
-            {screen === "history"   && <HistoryScreen onBack={() => nav("home")} onReference={() => nav("reference")}/>}
+            {screen === "whatif"    && <WhatIfScreen profile={profile} trips={trips} onBack={() => nav("home")}/>}
+            {screen === "map"       && (
+              <MapScreen
+                profile={profile}
+                savedSpots={savedSpots}
+                onSaveSpot={(spot) => setSavedSpots((s) => [spot, ...s])}
+                onSaveCatch={(input) => setTrips((t) => applyCatchToTrips(t, input))}
+                onBack={() => nav("home")}
+              />
+            )}
+            {screen === "catchlog"  && (
+              <LedgerScreen
+                trips={trips}
+                budget={budget}
+                firstName={profile.name.split(" ")[0]}
+                onBudget={setBudget}
+                onTrips={setTrips}
+                onBack={() => nav("home")}
+              />
+            )}
+            {screen === "history"   && (
+              <HistoryScreen
+                trips={trips}
+                firstName={profile.name.split(" ")[0]}
+                onBack={() => nav("home")}
+                onReference={() => nav("reference")}
+              />
+            )}
             {screen === "reference" && <ReferenceScreen onBack={() => nav("history")}/>}
-            {screen === "settings"  && <SettingsScreen profile={profile} onBack={() => nav("home")} onReset={() => { setProfile(null); nav("onboarding"); }}/>}
+            {screen === "settings"  && <SettingsScreen profile={profile} onBack={() => nav("home")} onProfile={setProfile} onReset={() => { setProfile(null); nav("onboarding"); }}/>}
           </>}
         </div>
       </div>

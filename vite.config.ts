@@ -29,6 +29,9 @@ export default defineConfig(({ mode }) => {
         '@': path.resolve(__dirname, './src'),
       },
     },
+    optimizeDeps: {
+      exclude: ['maplibre-gl'],
+    },
     server: {
       host: '0.0.0.0',
       port: parseInt(process.env.PORT || '8443'),
