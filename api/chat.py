@@ -1,20 +1,37 @@
 """
 Vercel Serverless Function — /api/chat
-Forwards question + context to Gemini 2.5 Flash.
+Forwards question + context to Gemini via the native Generative Language API.
+Uses x-goog-api-key so new AQ. auth keys work.
 """
 
-import os
+from __future__ import annotations
+
 import json
+import os
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler
-import google.generativeai as genai
+from pathlib import Path
 
-# ─── Gemini configuration ──────────────────────────────────────────────────────
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+MODELS = ["gemini-3.6-flash", "gemini-flash-latest"]
 
 
-# ─── System prompt ─────────────────────────────────────────────────────────────
+def _load_dotenv() -> None:
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+
+
 def system_prompt(lang: str) -> str:
     if lang == "fil":
         return """Ikaw si Pawi, ang makakalikasang sea-turtle mascot ng TripWise — isang fishing decision app para sa mga mangingisda sa Navotas at Manila Bay.
@@ -40,7 +57,6 @@ Rules:
 
 
 def format_context(ctx: dict) -> str:
-    """Format context as a readable block for the LLM."""
     parts = [f"Timestamp: {ctx.get('timestamp', '')}", f"Language: {ctx.get('language', 'en')}"]
 
     bp = ctx.get("boat_profile")
@@ -74,7 +90,54 @@ def format_context(ctx: dict) -> str:
     return "\n".join(parts)
 
 
-# ─── Vercel handler ────────────────────────────────────────────────────────────
+def generate_answer(question: str, ctx: dict) -> str:
+    lang = ctx.get("language", "en")
+    prompt = f"""Current fishing conditions and context:
+---
+{format_context(ctx)}
+---
+
+Fisher's question: {question}"""
+    payload = json.dumps(
+        {
+            "system_instruction": {"parts": [{"text": system_prompt(lang)}]},
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        }
+    ).encode()
+
+    last_err = "Gemini request failed"
+    for model in MODELS:
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            data=payload,
+            method="POST",
+        )
+        req.add_header("Content-Type", "application/json")
+        req.add_header("x-goog-api-key", GEMINI_API_KEY or "")
+        try:
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                data = json.loads(resp.read().decode())
+            text = (
+                data.get("candidates", [{}])[0]
+                .get("content", {})
+                .get("parts", [{}])[0]
+                .get("text", "")
+                .strip()
+            )
+            if text:
+                return text
+            last_err = "Empty Gemini response"
+        except urllib.error.HTTPError as e:
+            body = e.read().decode(errors="replace")
+            try:
+                last_err = json.loads(body).get("error", {}).get("message", body[:180])
+            except Exception:
+                last_err = body[:180]
+        except Exception as e:
+            last_err = str(e)
+    raise RuntimeError(last_err)
+
+
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
@@ -90,27 +153,13 @@ class handler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(content_length))
 
-            question = body.get("question", "")
-            ctx = body.get("context", {})
-            lang = ctx.get("language", "en")
+            question = (body.get("question") or "").strip()
+            if not question:
+                self._json_response(400, {"error": "Missing question"})
+                return
 
-            context_block = format_context(ctx)
-
-            model = genai.GenerativeModel(
-                model_name="gemini-2.5-flash",
-                system_instruction=system_prompt(lang),
-            )
-
-            prompt = f"""Current fishing conditions and context:
----
-{context_block}
----
-
-Fisher's question: {question}"""
-
-            response = model.generate_content(prompt)
-            answer = response.text.strip() if response.text else "I couldn't generate a response."
-
+            ctx = body.get("context") or {}
+            answer = generate_answer(question, ctx)
             self._json_response(200, {"answer": answer})
 
         except Exception as e:
@@ -127,3 +176,6 @@ Fisher's question: {question}"""
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def log_message(self, format, *args):
+        return

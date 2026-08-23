@@ -95,21 +95,27 @@ export default function ChatPanel({ open, onClose, lang, profile, live }: ChatPa
       let actualMode = mode;
 
       if (online) {
-        // ─── Online: call backend API ─────────────────────────────────────────
         try {
           const res = await fetch(API_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ question: text, context: ctx }),
           });
-          if (!res.ok) throw new Error(`API ${res.status}`);
-          const data = await res.json();
+          const data = await res.json().catch(() => ({} as { answer?: string; error?: string }));
+          if (!res.ok) throw new Error(data.error || `API ${res.status}`);
           answer = data.answer || "Sorry, I couldn't generate a response.";
-        } catch {
-          // API unreachable — fall back to offline templates
-          actualMode = "offline";
-          const result = offlineRespond(text, ctx, lang);
-          answer = result.answer;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "";
+          const network = err instanceof TypeError;
+          if (network) {
+            actualMode = "offline";
+            const result = offlineRespond(text, ctx, lang);
+            answer = result.answer;
+          } else {
+            answer = lang === "fil"
+              ? `Hindi ako makasagot sa Gemini ngayon. ${msg}`
+              : `I couldn't reach Gemini just now. ${msg}`;
+          }
         }
       } else {
         // ─── Offline: templated response ─────────────────────────────────────
